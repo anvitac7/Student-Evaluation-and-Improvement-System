@@ -39,10 +39,25 @@ export default function ResumePage() {
     try {
       const uploaded = await uploadResume.mutateAsync(file);
       setSelectedId(uploaded.id);
-      toast({ title: "Resume uploaded", description: `${file.name} is now your active resume.` });
+      toast({
+        title: "Resume uploaded & profile updated",
+        description: `${file.name} was parsed and your profile details have been automatically filled in.`,
+      });
     } catch (err: any) {
       const detail = err?.response?.data?.detail ?? "Upload failed. Please try a different file.";
       toast({ title: "Upload failed", description: detail, variant: "destructive" });
+    }
+  };
+
+  const handleApplyAutofill = async () => {
+    if (!activeId || !suggestion) return;
+    try {
+      await applyAutofill.mutateAsync({ resumeId: activeId, patch: suggestion.patch });
+      setAutofillDismissed(true);
+      toast({ title: "Profile updated", description: "We filled in your profile from your resume." });
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail ?? "Couldn't update your profile. Please try again.";
+      toast({ title: "Autofill failed", description: detail, variant: "destructive" });
     }
   };
 

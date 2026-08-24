@@ -8,14 +8,15 @@ incompatible vocabularies.
 import re
 
 CANONICAL_SKILLS = [
-    "Python", "Java", "JavaScript", "TypeScript", "C++", "C", "C#", "Go", "Rust",
-    "SQL", "MongoDB", "PostgreSQL", "MySQL", "React", "Next.js", "Node.js",
-    "Express", "Django", "Flask", "FastAPI", "Spring Boot", "HTML", "CSS",
-    "Tailwind CSS", "Git", "Docker", "Kubernetes", "AWS", "Azure", "GCP",
-    "Machine Learning", "Deep Learning", "TensorFlow", "PyTorch", "NLP",
+    "Python", "Java", "JavaScript", "TypeScript", "C++", "C", "C#", "Go", "Rust", "PHP", "R", "Dart",
+    "SQL", "MongoDB", "PostgreSQL", "MySQL", "Oracle", "SQLite", "Firebase", "Redis",
+    "React", "Next.js", "Node.js", "Express", "Django", "Flask", "FastAPI", "Spring Boot",
+    "Angular", "Vue", "HTML", "CSS", "Tailwind CSS", "Bootstrap", "Flutter", "Android",
+    "Git", "Docker", "Kubernetes", "AWS", "Azure", "GCP", "Linux",
+    "Machine Learning", "Deep Learning", "TensorFlow", "PyTorch", "NLP", "Computer Vision",
     "Data Structures", "Algorithms", "Operating Systems", "Computer Networks",
-    "DBMS", "OOP", "REST API", "GraphQL", "Linux", "Pandas", "NumPy",
-    "Scikit-learn", "Redis", "CI/CD", "Agile", "Jira",
+    "DBMS", "OOP", "REST API", "GraphQL", "Pandas", "NumPy",
+    "Scikit-learn", "CI/CD", "Agile", "Jira", "MATLAB",
 ]
 
 ALIASES = {
@@ -24,7 +25,11 @@ ALIASES = {
     "ts": "TypeScript", "postgres": "PostgreSQL", "k8s": "Kubernetes",
     "ml": "Machine Learning", "dl": "Deep Learning", "oops": "OOP",
     "html5": "HTML", "css3": "CSS", "tailwind": "Tailwind CSS",
-    "sklearn": "Scikit-learn",
+    "sklearn": "Scikit-learn", "cv": "Computer Vision",
+    "expressjs": "Express", "express.js": "Express",
+    "vuejs": "Vue", "vue.js": "Vue", "angularjs": "Angular",
+    "dsa": "Data Structures", "algo": "Algorithms", "cn": "Computer Networks",
+    "os": "Operating Systems", "spring": "Spring Boot",
 }
 
 _CANONICAL_LOOKUP = {s.lower(): s for s in CANONICAL_SKILLS}

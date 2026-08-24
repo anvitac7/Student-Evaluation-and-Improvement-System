@@ -29,3 +29,9 @@ export interface StudentProfileUpdate {
   achievements?: string[];
   certificates?: string[];
 }
+
+export interface AutofillSuggestion {
+  patch: StudentProfileUpdate;
+  education: Record<string, string>[];
+  experience: Record<string, string>[];
+}

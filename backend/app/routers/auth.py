@@ -38,7 +38,17 @@ def _set_refresh_cookie(response: Response, raw_refresh_token: str) -> None:
         secure=settings.COOKIE_SECURE,
         samesite="strict",
         domain=settings.COOKIE_DOMAIN,
-        path="/api/v1/auth",
+        # IMPORTANT: this must be "/" — NOT "/api/v1/auth".
+        # The frontend never calls this FastAPI origin directly; it goes
+        # through the Next.js rewrite proxy at /api/backend/* (see
+        # next.config.mjs), so every request the browser actually makes is
+        # to a path like "/api/backend/auth/refresh". A cookie scoped to
+        # "/api/v1/auth" only gets attached by the browser when the
+        # REQUEST path starts with "/api/v1/auth" — which it never does
+        # through the proxy — so the refresh cookie was silently never
+        # sent back, making /auth/refresh always fail with 401 on reload.
+        # That was the root cause of "refresh logs the user out."
+        path="/",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
     )
 
@@ -47,7 +57,10 @@ def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(
         key=settings.REFRESH_TOKEN_COOKIE_NAME,
         domain=settings.COOKIE_DOMAIN,
-        path="/api/v1/auth",
+        # Must match the path used in _set_refresh_cookie exactly, or the
+        # browser treats this as clearing a different cookie and the old
+        # one lingers.
+        path="/",
     )
 
 

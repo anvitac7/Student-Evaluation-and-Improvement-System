@@ -17,6 +17,12 @@ class ParsedResumeData(BaseModel):
     name: str | None = None
     email: str | None = None
     phone: str | None = None
+    linkedin_url: str | None = None
+    github_url: str | None = None
+    portfolio_url: str | None = None
+    department: str | None = None
+    batch_year: int | None = None
+    cgpa: float | None = None
     education: list[dict] = Field(default_factory=list)
     experience: list[dict] = Field(default_factory=list)
     projects: list[dict] = Field(default_factory=list)
@@ -24,6 +30,7 @@ class ParsedResumeData(BaseModel):
     certifications: list[str] = Field(default_factory=list)
     achievements: list[str] = Field(default_factory=list)
     languages: list[str] = Field(default_factory=list)
+    parsing_metadata: dict | None = None
 
 
 class ResumeInDB(MongoBaseModel):

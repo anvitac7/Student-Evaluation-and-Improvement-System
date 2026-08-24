@@ -65,6 +65,7 @@ class AssessmentInDB(MongoBaseModel):
     question_pool_size: int = 10
     time_limit_sec: int = 1800
     anti_cheat_config: dict = Field(default_factory=dict)  # populated by Phase 11
+    drive_id: PyObjectId | None = None  # links assessment to a specific drive (set by TPO)
     created_by: PyObjectId
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -186,6 +187,7 @@ class AssessmentResponse(BaseModel):
 
 class StartAttemptRequest(BaseModel):
     fingerprint_hash: str | None = None
+    application_id: str | None = None  # required when starting a drive-linked assessment
 
 
 class StartAttemptResponse(BaseModel):

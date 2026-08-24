@@ -83,4 +83,14 @@ async def ensure_indexes() -> None:
     await db.activity_logs.create_index([("user_id", 1), ("timestamp", -1)])
     await db.activity_logs.create_index([("entity", 1), ("entity_id", 1)])
 
+    # Profile-to-user uniqueness — each user can have exactly one profile
+    await db.students.create_index("user_id", unique=True)
+    await db.tpos.create_index("user_id", unique=True)
+    await db.admins.create_index("user_id", unique=True)
+
+    # Assessment-drive linkage (Phase 2 additions)
+    await db.assessments.create_index("drive_id", sparse=True)
+    await db.assessment_attempts.create_index("assessment_id")
+    await db.applications.create_index("assessment_attempt_id", sparse=True)
+
     logger.info("Indexes ensured.")

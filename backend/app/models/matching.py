@@ -38,4 +38,19 @@ class RankedApplicantResponse(MatchScoreBreakdown):
     application_id: str
     student_id: str
     student_name: str
+    student_department: str | None = None
+    student_cgpa: float | None = None
     resume_id: str
+    resume_filename: str | None = None
+    status: str = "applied"
+    # Eligibility
+    eligibility_passed: bool | None = None
+    eligibility_reasons: list[str] = []
+    # Assessment
+    assessment_status: str = "not_required"
+    assessment_score_pct: float | None = None
+    # Decision
+    rejection_reasons: list[str] = []
+    rejection_note: str | None = None
+    decision_at: str | None = None
+    applied_at: str | None = None

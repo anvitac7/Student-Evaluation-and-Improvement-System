@@ -9,6 +9,7 @@ simple heuristic rather than crashing, since a resume upload succeeding
 should never depend on an NLP model being present.
 """
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -36,20 +37,26 @@ def _get_nlp():
 
 
 def _heuristic_name(text: str) -> str | None:
-    """First non-empty line that looks like a name: no digits, no '@',
-    1-5 words. Resumes almost universally lead with the candidate's name
-    as the very first line."""
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
+    """Finds the most likely candidate name among the first 10 non-empty lines:
+    no digits, no '@', no URLs or symbols, 1-4 words."""
+    blacklist_words = {
+        "resume", "curriculum", "vitae", "cv", "page", "profile", "contact",
+        "email", "phone", "address", "education", "experience", "skills",
+        "projects", "summary", "objective", "about", "portfolio", "github", "linkedin"
+    }
+
+    lines = [l.strip() for l in text.splitlines() if l.strip()][:10]
+    for line in lines:
+        if "@" in line or any(ch.isdigit() for ch in line) or "http" in line.lower() or "www." in line.lower() or ".com" in line.lower():
             continue
-        if "@" in stripped or any(ch.isdigit() for ch in stripped):
-            return None  # first content line looks like contact info, not a name
-        words = stripped.split()
-        if 1 <= len(words) <= 5:
-            return stripped
-        return None
+        cleaned = re.sub(r"[^A-Za-z\s.\-']", "", line).strip()
+        words = cleaned.split()
+        if 1 <= len(words) <= 4:
+            if not any(w.lower() in blacklist_words for w in words):
+                # Valid name candidate
+                return " ".join(words)
     return None
+
 
 
 def extract_name(text: str) -> str | None:

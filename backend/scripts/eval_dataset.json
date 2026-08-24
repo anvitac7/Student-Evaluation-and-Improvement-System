@@ -1,0 +1,42 @@
+{
+  "skill_extraction": [
+    {
+      "id": "resume_unusual_phrasing",
+      "text": "Hands-on with React and Node for two internships; comfortable writing Postgres queries; some exposure to Terraform and Kafka for a college infra project."
+    },
+    {
+      "id": "resume_standard_phrasing",
+      "text": "Skills: Python, JavaScript, React.js, MongoDB, Docker, AWS, Git."
+    },
+    {
+      "id": "jd_missing_context",
+      "text": "We need someone who can containerize services and is not afraid of k8s manifests; bonus if you've used GraphQL instead of plain REST."
+    }
+  ],
+  "gap_analysis": [
+    {
+      "id": "attempt_low_dsa",
+      "facts": {
+        "wrong_questions_by_skill": {"Data Structures": 4, "Algorithms": 3},
+        "mastery_percent": {"Data Structures": 38, "Algorithms": 42, "OOP": 81},
+        "retrieved_chunks": [
+          "Note: Binary search trees maintain O(log n) lookup only when balanced.",
+          "Common mistake: confusing time complexity of array vs linked-list insertion."
+        ]
+      }
+    }
+  ],
+  "jd_explanation": [
+    {
+      "id": "drive_backend_role",
+      "facts": {
+        "score_breakdown": {"semantic_similarity": 0.71, "skills_overlap": 0.40, "experience_fit": 0.55},
+        "missing_skills": ["Docker", "Kubernetes"],
+        "retrieved_chunks": [
+          "JD excerpt: candidates should be able to containerize and deploy services independently.",
+          "Skill note: Kubernetes builds on Docker — learn Docker fundamentals first."
+        ]
+      }
+    }
+  ]
+}

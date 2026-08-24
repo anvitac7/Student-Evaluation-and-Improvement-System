@@ -18,6 +18,34 @@ class ApplicationStatus(str, Enum):
     SELECTED = "selected"
 
 
+class AssessmentStatus(str, Enum):
+    """Assessment requirement status on an application."""
+    NOT_REQUIRED = "not_required"
+    PENDING = "pending"
+    PASSED = "passed"
+    FAILED = "failed"
+    EXPIRED = "expired"
+
+
+class RejectionReason(str, Enum):
+    LOW_MATCH_SCORE = "low_match_score"
+    SKILL_GAP = "skill_gap"
+    LOW_ASSESSMENT_SCORE = "low_assessment_score"
+    ASSESSMENT_NOT_ATTEMPTED = "assessment_not_attempted"
+    ELIGIBILITY = "eligibility"
+    EXPERIENCE_GAP = "experience_gap"
+    OTHER = "other"
+
+
+# Valid status transitions — terminal states cannot change.
+VALID_STATUS_TRANSITIONS: dict[ApplicationStatus, set[ApplicationStatus]] = {
+    ApplicationStatus.APPLIED: {ApplicationStatus.SHORTLISTED, ApplicationStatus.REJECTED},
+    ApplicationStatus.SHORTLISTED: {ApplicationStatus.SELECTED, ApplicationStatus.REJECTED},
+    ApplicationStatus.SELECTED: set(),    # terminal
+    ApplicationStatus.REJECTED: set(),    # terminal
+}
+
+
 class EligibilityCriteria(BaseModel):
     min_cgpa: float | None = None
     departments: list[str] = Field(default_factory=list)  # empty = open to all departments
@@ -50,6 +78,10 @@ class PlacementDriveInDB(MongoBaseModel):
     status: DriveStatus = DriveStatus.OPEN
     created_by: PyObjectId  # TPO document _id (not the User _id)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Assessment linkage — TPO attaches an existing (admin-created) assessment
+    required_assessment_id: PyObjectId | None = None
+    assessment_min_score_pct: float | None = None  # e.g. 70.0 means 70%
+    assessment_deadline: datetime | None = None
 
 
 class ApplicationInDB(MongoBaseModel):
@@ -57,12 +89,26 @@ class ApplicationInDB(MongoBaseModel):
     student_id: PyObjectId
     resume_id: PyObjectId
     status: ApplicationStatus = ApplicationStatus.APPLIED
+    # Eligibility
+    eligibility_passed: bool | None = None
+    eligibility_reasons: list[str] = Field(default_factory=list)
+    # Matching — persisted after screening so scores are historical
     final_score: float | None = None  # populated by Phase 9
     semantic_score: float | None = None
     skills_score: float | None = None
     experience_score: float | None = None
     matched_skills: list[str] = Field(default_factory=list)
     missing_skills: list[str] = Field(default_factory=list)
+    # Assessment
+    assessment_attempt_id: PyObjectId | None = None
+    assessment_score_pct: float | None = None
+    assessment_status: AssessmentStatus = AssessmentStatus.NOT_REQUIRED
+    # Decision
+    rejection_reasons: list[str] = Field(default_factory=list)  # RejectionReason values
+    rejection_note: str | None = None
+    decision_at: datetime | None = None
+    # Metadata
+    evaluation_version: str | None = None  # tracks model/formula version
     applied_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -84,6 +130,10 @@ class DriveCreateRequest(BaseModel):
     eligibility: EligibilityCriteria = Field(default_factory=EligibilityCriteria)
     deadline: datetime
     selection_process: list[str] = Field(default_factory=list)
+    # Assessment linkage
+    required_assessment_id: str | None = None
+    assessment_min_score_pct: float | None = Field(default=None, ge=0, le=100)
+    assessment_deadline: datetime | None = None
 
 
 class DriveUpdateRequest(BaseModel):
@@ -98,6 +148,23 @@ class DriveUpdateRequest(BaseModel):
     deadline: datetime | None = None
     selection_process: list[str] | None = None
     status: DriveStatus | None = None
+    # Assessment linkage
+    required_assessment_id: str | None = None
+    assessment_min_score_pct: float | None = Field(default=None, ge=0, le=100)
+    assessment_deadline: datetime | None = None
+
+
+class ApplicationStatusUpdateRequest(BaseModel):
+    status: ApplicationStatus
+    rejection_reasons: list[str] = Field(default_factory=list)  # RejectionReason values
+    rejection_note: str | None = Field(default=None, max_length=1000)
+
+
+class BulkApplicationStatusRequest(BaseModel):
+    application_ids: list[str] = Field(min_length=1)
+    status: ApplicationStatus
+    rejection_reasons: list[str] = Field(default_factory=list)
+    rejection_note: str | None = Field(default=None, max_length=1000)
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +196,10 @@ class DriveDetail(DriveSummary):
     selection_process: list[str]
     experience_required_years: float
     created_at: datetime
+    # Assessment config
+    required_assessment_id: str | None = None
+    assessment_min_score_pct: float | None = None
+    assessment_deadline: datetime | None = None
 
 
 class ApplicationResponse(BaseModel):
@@ -138,10 +209,24 @@ class ApplicationResponse(BaseModel):
     resume_id: str
     status: ApplicationStatus
     applied_at: datetime
-
-
-class ApplicationStatusUpdateRequest(BaseModel):
-    status: ApplicationStatus
+    # Eligibility
+    eligibility_passed: bool | None = None
+    eligibility_reasons: list[str] = Field(default_factory=list)
+    # Matching
+    final_score: float | None = None
+    semantic_score: float | None = None
+    skills_score: float | None = None
+    experience_score: float | None = None
+    matched_skills: list[str] = Field(default_factory=list)
+    missing_skills: list[str] = Field(default_factory=list)
+    # Assessment
+    assessment_attempt_id: str | None = None
+    assessment_score_pct: float | None = None
+    assessment_status: str = "not_required"
+    # Decision
+    rejection_reasons: list[str] = Field(default_factory=list)
+    rejection_note: str | None = None
+    decision_at: datetime | None = None
 
 
 class ApplicationDetail(ApplicationResponse):
@@ -153,3 +238,24 @@ class ApplicationDetail(ApplicationResponse):
     student_department: str | None
     student_cgpa: float | None
     resume_filename: str | None
+
+
+class BulkStatusResult(BaseModel):
+    updated_count: int
+    failed_ids: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+class ScreeningSummary(BaseModel):
+    total_applications: int
+    eligible: int
+    ineligible: int
+    assessment_pending: int
+    assessment_passed: int
+    assessment_failed: int
+    assessment_expired: int
+    assessment_not_required: int
+    shortlisted: int
+    rejected: int
+    selected: int
+    recommended_shortlist: int

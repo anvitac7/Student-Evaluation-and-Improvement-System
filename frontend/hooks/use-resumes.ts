@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/lib/api-client";
 import type { ResumeDetail, ResumeSummary, ResumeUploadResponse } from "@/types/resume";
+import type { AutofillSuggestion, StudentProfile, StudentProfileUpdate } from "@/types/student";
 
 const RESUME_HISTORY_KEY = ["resumes", "history"] as const;
 const RESUME_DETAIL_KEY = (id: string) => ["resumes", id] as const;
@@ -55,6 +56,39 @@ export function useReparseResume() {
     onSuccess: (data) => {
       queryClient.setQueryData(RESUME_DETAIL_KEY(data.id), data);
       queryClient.invalidateQueries({ queryKey: RESUME_HISTORY_KEY });
+    },
+  });
+}
+/**
+ * PHASE 8 FIX: the backend's autofill endpoints
+ * (GET/POST /resumes/{id}/autofill-suggestion, .../autofill-apply) already
+ * existed and worked, but the frontend never called them — so uploading a
+ * resume never actually filled in the profile, even though parsing worked
+ * fine. These two hooks wire that up: fetch a suggested patch for review,
+ * then let the student confirm (optionally after editing) before it's
+ * actually written to their profile. Never applied silently/automatically.
+ */
+export function useAutofillSuggestion(resumeId: string | null) {
+  return useQuery({
+    queryKey: resumeId ? ["resumes", resumeId, "autofill-suggestion"] : ["resumes", "none", "autofill-suggestion"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<AutofillSuggestion>(`/resumes/${resumeId}/autofill-suggestion`);
+      return data;
+    },
+    enabled: Boolean(resumeId),
+    retry: false, // 404/400 (e.g. "not parsed yet") is an expected, not transient, outcome
+  });
+}
+
+export function useApplyAutofill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ resumeId, patch }: { resumeId: string; patch: StudentProfileUpdate }) => {
+      const { data } = await apiClient.post<StudentProfile>(`/resumes/${resumeId}/autofill-apply`, patch);
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["student-profile", "me"], data);
     },
   });
 }

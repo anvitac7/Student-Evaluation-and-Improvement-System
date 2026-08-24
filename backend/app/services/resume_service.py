@@ -86,6 +86,22 @@ class ResumeService:
             if refreshed:
                 resume = refreshed
 
+            # Automatically autofill/merge profile fields (name, phone, skills)
+            try:
+                from app.services.profile_autofill_service import ProfileAutofillService
+                from app.services.student_profile_service import StudentProfileService
+
+                autofill_service = ProfileAutofillService(self.db)
+                suggestion = await autofill_service.build_suggestion(student_user_id, resume.id)
+                # Check if there are non-empty fields to update
+                fields_to_update = suggestion.patch.model_dump(exclude_unset=True)
+                if any(v is not None and v != [] and v != "" for v in fields_to_update.values()):
+                    profile_service = StudentProfileService(self.db)
+                    await profile_service.update_profile(student_user_id, suggestion.patch)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("Profile auto-population encountered an issue: %s", exc, exc_info=True)
+
         return resume
 
     @staticmethod

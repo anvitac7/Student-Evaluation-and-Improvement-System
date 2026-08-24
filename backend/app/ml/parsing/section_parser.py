@@ -7,29 +7,47 @@ section rather than assuming one fixed vocabulary.
 import re
 
 SECTION_HEADERS: dict[str, list[str]] = {
-    "education": ["education", "academic background", "academics", "qualifications"],
-    "experience": [
-        "experience",
-        "work experience",
-        "employment history",
-        "professional experience",
-        "work history",
+    "education": [
+        "education", "academic background", "academics", "qualifications", "academic qualifications",
+        "educational qualifications", "education & qualifications", "educational background",
     ],
-    "projects": ["projects", "academic projects", "personal projects", "key projects"],
-    "skills": ["skills", "technical skills", "skill set", "core competencies", "skills summary"],
-    "certifications": ["certifications", "certificates", "licenses", "certifications & licenses"],
-    "achievements": ["achievements", "accomplishments", "awards", "honors", "honors & awards"],
-    "languages": ["languages", "language proficiency"],
+    "experience": [
+        "experience", "work experience", "employment history", "professional experience",
+        "work history", "internships", "internship experience", "industrial experience",
+        "professional background", "relevant experience",
+    ],
+    "projects": [
+        "projects", "academic projects", "personal projects", "key projects", "notable projects",
+        "technical projects", "side projects", "project work",
+    ],
+    "skills": [
+        "skills", "technical skills", "skill set", "core competencies", "skills summary",
+        "skills & expertise", "skills & tools", "technologies", "key skills", "proficiencies",
+        "technical expertise", "skills & abilities", "tools & technologies",
+    ],
+    "certifications": [
+        "certifications", "certificates", "licenses", "certifications & licenses",
+        "courses & certifications", "certifications & courses", "training & certifications",
+        "trainings & courses", "certifications and training",
+    ],
+    "achievements": [
+        "achievements", "accomplishments", "awards", "honors", "honors & awards",
+        "awards & achievements", "scholastic achievements", "extra-curricular achievements",
+        "extracurricular activities", "extracurriculars",
+    ],
+    "languages": [
+        "languages", "language proficiency", "languages known",
+    ],
 }
 
 
 def _build_header_pattern() -> re.Pattern:
     all_variants = [v for variants in SECTION_HEADERS.values() for v in variants]
-    # Longest first so multi-word headers ("work experience") are matched
-    # before a shorter substring header ("experience") could shadow them.
     all_variants.sort(key=len, reverse=True)
     escaped = [re.escape(v) for v in all_variants]
-    return re.compile(rf"^\s*({'|'.join(escaped)})\s*:?\s*$", re.IGNORECASE)
+    # Match headers even if preceded/followed by decorative characters like |, -, =, :, #
+    return re.compile(rf"^[\s\-_#=*•|~]*({'|'.join(escaped)})[\s\-_#=*•|~:]*$", re.IGNORECASE)
+
 
 
 HEADER_PATTERN = _build_header_pattern()

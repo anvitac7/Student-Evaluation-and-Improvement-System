@@ -6,7 +6,7 @@ collections hold everything role-specific, linked by user_id.
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.models.base import MongoBaseModel, PyObjectId
 
@@ -118,6 +118,27 @@ class StudentInDB(MongoBaseModel):
     certificates: list[str] = Field(default_factory=list)
     active_resume_id: PyObjectId | None = None
     profile_completeness_pct: float = 0.0
+
+    # DEFENSIVE FIX: Field(default_factory=list) only fills in a MISSING
+    # key — it does nothing if the key exists with an explicit `None`
+    # (e.g. a document written by a crashed/partial insert, or edited by
+    # hand in mongosh). Without this, one corrupted student document
+    # 500s every endpoint that ever looks that student up — resume
+    # upload, assessment start, knowledge-states, etc. — since
+    # get_by_user_id() re-validates the raw Mongo doc on every call.
+    @field_validator("achievements", "certificates", "skills", mode="before")
+    @classmethod
+    def _coerce_none_list_to_empty(cls, v):
+        return [] if v is None else v
+
+    # `name` has no safe empty default (a blank name would break the UI
+    # elsewhere), but coercing None -> a visible placeholder at least
+    # keeps the API from 500ing — the student/admin can then fix it via
+    # a normal profile update instead of needing a direct DB patch.
+    @field_validator("name", mode="before")
+    @classmethod
+    def _coerce_none_name(cls, v):
+        return v if v else "(name not set)"
 
 
 class TPOInDB(MongoBaseModel):

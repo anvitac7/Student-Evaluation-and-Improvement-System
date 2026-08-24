@@ -71,18 +71,30 @@ class AuthService:
                 "last_login": None,
             }
         )
-        await self.students.create(
-            {
-                "user_id": user.id,
-                "name": payload.name,
-                "department": payload.department,
-                "batch_year": payload.batch_year,
-                "skills": [],
-                "achievements": [],
-                "certificates": [],
-                "profile_completeness_pct": 0.0,
-            }
-        )
+        # FIX: this used to be two separate, non-atomic inserts — if the
+        # process crashed/restarted between them (which is exactly what
+        # was happening during earlier bcrypt failures), you'd end up
+        # with a `users` row and no matching `students` row at all, or a
+        # `students` doc with missing/null fields from a retried request
+        # hitting a half-created state. If the student-profile insert
+        # fails for any reason, roll back the orphaned user instead of
+        # leaving a broken half-account behind.
+        try:
+            await self.students.create(
+                {
+                    "user_id": user.id,
+                    "name": payload.name,
+                    "department": payload.department,
+                    "batch_year": payload.batch_year,
+                    "skills": [],
+                    "achievements": [],
+                    "certificates": [],
+                    "profile_completeness_pct": 0.0,
+                }
+            )
+        except Exception:
+            await self.users.delete_by_id(str(user.id))
+            raise
         return user
 
     async def register_tpo(self, payload: TPORegisterRequest) -> UserInDB:

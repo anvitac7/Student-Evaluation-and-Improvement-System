@@ -13,20 +13,21 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.core.config import get_settings
+from app.core.config import get_settings, validate_production_config
 from app.core.database import close_mongo_connection, connect_to_mongo, ensure_indexes
 from app.core.limiter import limiter
-from app.routers import analytics, assessments, auth, drives, health, matching, questions, resumes, students
+from app.routers import analytics, assessments, auth, drives, health, matching, questions, resumes, students, gap_analysis, jd_explanation
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Startup ---
+    validate_production_config(settings)
     await connect_to_mongo()
     await ensure_indexes()
     logger.info("%s started in '%s' mode.", settings.APP_NAME, settings.APP_ENV)
@@ -79,6 +80,8 @@ def create_app() -> FastAPI:
     app.include_router(assessments.router, prefix=f"{settings.API_V1_PREFIX}/assessments", tags=["Assessments"])
     app.include_router(analytics.router, prefix=f"{settings.API_V1_PREFIX}/analytics", tags=["Analytics"])
     app.include_router(matching.router, prefix=f"{settings.API_V1_PREFIX}/matching", tags=["Matching"])
+    app.include_router(gap_analysis.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(jd_explanation.router, prefix=settings.API_V1_PREFIX)
     # Phase 11+: anti-cheat additions to assessments, admin routers
 
     return app

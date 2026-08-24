@@ -1,8 +1,9 @@
 "use client";
 
-import { Award, BarChart3, Briefcase, GraduationCap, Percent, TrendingUp, Users } from "lucide-react";
+import { AlertCircle, Award, BarChart3, Briefcase, GraduationCap, Percent, TrendingUp, Users } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,14 +13,32 @@ import { StatusBreakdownChart } from "@/components/shared/status-breakdown-chart
 import { useAdminAnalytics } from "@/hooks/use-analytics";
 
 export default function AdminAnalyticsPage() {
-  const { data, isLoading } = useAdminAnalytics();
+  const { data, isLoading, isError, refetch, isRefetching } = useAdminAnalytics();
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-64 w-full" />
       </div>
+    );
+  }
+
+  // See the TPO analytics page for why this branch matters: without it,
+  // a failed request shows an infinite loading skeleton instead of ever
+  // surfacing an error, which looks exactly like "Analytics won't open."
+  if (isError || !data) {
+    return (
+      <EmptyState
+        icon={AlertCircle}
+        title="Couldn't load analytics"
+        description="Something went wrong while fetching platform analytics. Check your connection and try again."
+        action={
+          <Button variant="outline" onClick={() => refetch()} disabled={isRefetching}>
+            {isRefetching ? "Retrying…" : "Retry"}
+          </Button>
+        }
+      />
     );
   }
 

@@ -1,42 +1,46 @@
 # --- Web framework ---
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-python-multipart==0.0.9
+fastapi
+uvicorn[standard]
+python-multipart
 
 # --- Config & validation ---
-pydantic==2.9.2
-pydantic-settings==2.5.2
-email-validator==2.2.0
+pydantic
+pydantic-settings
+email-validator
 
 # --- Database (async MongoDB) ---
-motor==3.5.1
-pymongo==4.8.0
+motor
+pymongo
 
 # --- Auth ---
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.2.0
-google-auth==2.35.0
-requests==2.32.3
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt==4.0.1
+google-auth
+requests
 
 # --- Rate limiting ---
-slowapi==0.1.9
+slowapi
 
 # --- Utilities ---
-python-dotenv==1.0.1
-tenacity==9.0.0
-cloudinary==1.41.0
+python-dotenv
+tenacity
+cloudinary
 
 # --- Testing ---
-pytest==8.3.3
-pytest-asyncio==0.24.0
-httpx==0.27.2
-mongomock-motor==0.0.34
+pytest
+pytest-asyncio
+httpx
+mongomock-motor
 
-# --- Resume parsing (Phase 6) ---
-pymupdf==1.24.10
-pdfplumber==0.11.4
-spacy==3.7.6
+# --- Resume parsing (Phase 6) & OCR ---
+pymupdf
+pdfplumber
+spacy
+Pillow
+# PaddleOCR and PaddlePaddle for scanned resume OCR (PP-OCRv4)
+# For CPU installations: paddlepaddle
+# For GPU (CUDA 11.8/12.0) installations: paddlepaddle-gpu (see README / installation guide)
 
 # --- ML / semantic matching (Phase 7/9) ---
 # Deliberately plain `transformers` + `torch`, NOT `sentence-transformers` —
@@ -46,7 +50,10 @@ spacy==3.7.6
 # AutoModel/AutoModelForSequenceClassification only depends on standard
 # config.json + model.safetensors + tokenizer files, which are stable
 # regardless of which wrapper library saved them.
-torch==2.4.1
-transformers==4.45.2
-scikit-learn==1.6.1
-numpy==1.26.4
+torch
+transformers
+scikit-learn
+numpy
+openai
+httpx
+uvicorn

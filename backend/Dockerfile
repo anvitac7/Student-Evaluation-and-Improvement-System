@@ -2,10 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps needed later by PyMuPDF/spaCy/faiss (Phase 6/7); kept minimal now.
+# System deps needed for PyMuPDF/spaCy/OpenCV/PaddleOCR
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

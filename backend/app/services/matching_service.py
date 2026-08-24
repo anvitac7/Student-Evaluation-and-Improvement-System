@@ -66,6 +66,37 @@ def exp_fit(resume_years: float, jd_years: float) -> float:
     return max(0.0, min(1.0, resume_years / jd_years))
 
 
+def compute_final_score(
+    semantic: float,
+    skills_score: float,
+    experience_score: float,
+    assessment_score_pct: float | None = None,
+    has_assessment: bool = False,
+) -> float:
+    """Canonical scoring formula — the SINGLE source of truth for final
+    score calculation. Every code path (matching, screening, ranking,
+    analytics) MUST use this function. No frontend, no other backend
+    module should reimplement this formula.
+
+    Formula: 0.40 × semantic + 0.30 × skills + 0.20 × experience + 0.10 × assessment
+
+    If the drive has no required assessment, the assessment component is
+    treated as 1.0 so the candidate is not unfairly penalized.
+    """
+    if has_assessment and assessment_score_pct is not None:
+        assessment_normalized = assessment_score_pct / 100.0
+    else:
+        # No assessment required or not yet scored — full credit
+        assessment_normalized = 1.0
+
+    return (
+        0.40 * float(semantic)
+        + 0.30 * skills_score
+        + 0.20 * experience_score
+        + 0.10 * assessment_normalized
+    )
+
+
 class MatchCandidate:
     """One side of a match — either a resume or a JD, reduced to exactly
     what the scoring function needs. Keeps score_batch() below symmetric
@@ -153,7 +184,7 @@ class MatchingService:
             missing = jd.skills - resume.skills
             skills_score = len(matched) / max(1, len(jd.skills))
             experience_score = exp_fit(resume.experience_years, jd.experience_years)
-            final_score = 0.50 * float(sem) + 0.35 * skills_score + 0.15 * experience_score
+            final_score = compute_final_score(float(sem), skills_score, experience_score)
             results.append(
                 {
                     "candidate_id": jd.id,
@@ -178,7 +209,7 @@ class MatchingService:
             missing = jd.skills - resume.skills
             skills_score = len(matched) / max(1, len(jd.skills))  # denominator is always the JD's skill count
             experience_score = exp_fit(resume.experience_years, jd.experience_years)
-            final_score = 0.50 * float(sem) + 0.35 * skills_score + 0.15 * experience_score
+            final_score = compute_final_score(float(sem), skills_score, experience_score)
             results.append(
                 {
                     "candidate_id": resume.id,

@@ -9,10 +9,13 @@ import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 import { GoogleSignInButton } from "@/components/shared/google-sign-in-button";
 import { apiClient } from "@/lib/api-client";
+import { DEPARTMENTS } from "@/lib/departments";
 
 type Role = "student" | "tpo";
 
@@ -23,7 +26,12 @@ const studentSchema = z.object({
   email: z.string().email("Enter a valid email address."),
   password: z.string().min(8, "Password must be at least 8 characters."),
   department: z.string().min(1, "Department is required."),
-  batch_year: z.coerce.number().int().min(currentYear - 6).max(currentYear + 6),
+  batch_year: z.coerce
+    .number({ invalid_type_error: "Graduation year is required." })
+    .int("Graduation year must be a whole number.")
+    .min(currentYear - 6, `Graduation year cannot be before ${currentYear - 6}.`)
+    .max(currentYear + 6, `Graduation year cannot be after ${currentYear + 6}.`)
+    .refine((val) => val >= 0, "Graduation year cannot be negative."),
 });
 
 const tpoSchema = z.object({
@@ -69,18 +77,30 @@ function StudentRegisterForm() {
       </div>
       <div className="space-y-2">
         <Label htmlFor="password">Password</Label>
-        <Input id="password" type="password" {...register("password")} />
+        <PasswordInput id="password" {...register("password")} />
         {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="department">Department</Label>
-          <Input id="department" placeholder="Computer Science" {...register("department")} />
+          <Combobox
+            id="department"
+            options={DEPARTMENTS}
+            placeholder="Type or select a department"
+            {...register("department")}
+          />
           {errors.department && <p className="text-sm text-destructive">{errors.department.message}</p>}
         </div>
         <div className="space-y-2">
           <Label htmlFor="batch_year">Graduation year</Label>
-          <Input id="batch_year" type="number" {...register("batch_year")} />
+          <Input
+            id="batch_year"
+            type="number"
+            min={currentYear - 6}
+            max={currentYear + 6}
+            step={1}
+            {...register("batch_year")}
+          />
           {errors.batch_year && <p className="text-sm text-destructive">{errors.batch_year.message}</p>}
         </div>
       </div>
@@ -128,7 +148,7 @@ function TPORegisterForm() {
       </div>
       <div className="space-y-2">
         <Label htmlFor="tpo-password">Password</Label>
-        <Input id="tpo-password" type="password" {...register("password")} />
+        <PasswordInput id="tpo-password" {...register("password")} />
         {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
       </div>
       <div className="space-y-2">

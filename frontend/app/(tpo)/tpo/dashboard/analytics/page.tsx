@@ -1,8 +1,9 @@
 "use client";
 
-import { BarChart3, Briefcase, Percent, Users } from "lucide-react";
+import { AlertCircle, BarChart3, Briefcase, Percent, Users } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -11,14 +12,33 @@ import { StatusBreakdownChart } from "@/components/shared/status-breakdown-chart
 import { useTpoAnalytics } from "@/hooks/use-analytics";
 
 export default function TpoAnalyticsPage() {
-  const { data, isLoading } = useTpoAnalytics();
+  const { data, isLoading, isError, refetch, isRefetching } = useTpoAnalytics();
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-64 w-full" />
       </div>
+    );
+  }
+
+  // Without this branch, a failed request left isLoading=false and
+  // data=undefined forever, so the page fell through to the loading
+  // skeleton indefinitely — indistinguishable from the page "never
+  // opening." Surfacing the error with a retry button fixes that.
+  if (isError || !data) {
+    return (
+      <EmptyState
+        icon={AlertCircle}
+        title="Couldn't load analytics"
+        description="Something went wrong while fetching your analytics. Check your connection and try again."
+        action={
+          <Button variant="outline" onClick={() => refetch()} disabled={isRefetching}>
+            {isRefetching ? "Retrying…" : "Retry"}
+          </Button>
+        }
+      />
     );
   }
 

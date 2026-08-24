@@ -1,3 +1,5 @@
+from bson import ObjectId
+
 from app.models.user import AdminInDB, StudentInDB, TPOInDB
 from app.repositories.base import BaseRepository
 
@@ -7,7 +9,8 @@ class StudentRepository(BaseRepository[StudentInDB]):
     model = StudentInDB
 
     async def get_by_user_id(self, user_id: str) -> StudentInDB | None:
-        return await self.find_one({"user_id": user_id})
+        target = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
+        return await self.find_one({"$or": [{"user_id": target}, {"user_id": str(user_id)}]})
 
 
 class TPORepository(BaseRepository[TPOInDB]):
@@ -15,7 +18,8 @@ class TPORepository(BaseRepository[TPOInDB]):
     model = TPOInDB
 
     async def get_by_user_id(self, user_id: str) -> TPOInDB | None:
-        return await self.find_one({"user_id": user_id})
+        target = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
+        return await self.find_one({"$or": [{"user_id": target}, {"user_id": str(user_id)}]})
 
 
 class AdminRepository(BaseRepository[AdminInDB]):
@@ -23,4 +27,6 @@ class AdminRepository(BaseRepository[AdminInDB]):
     model = AdminInDB
 
     async def get_by_user_id(self, user_id: str) -> AdminInDB | None:
-        return await self.find_one({"user_id": user_id})
+        target = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
+        return await self.find_one({"$or": [{"user_id": target}, {"user_id": str(user_id)}]})
+

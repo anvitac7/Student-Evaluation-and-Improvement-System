@@ -27,3 +27,23 @@ def extract_linkedin(text: str) -> str | None:
 def extract_github(text: str) -> str | None:
     match = GITHUB_RE.search(text)
     return match.group(0) if match else None
+
+
+PORTFOLIO_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?([a-zA-Z0-9-]+\.(?:github\.io|vercel\.app|netlify\.app|portfolio|me|dev|tech|site|online|info|space|link)|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:/[^\s,]+)?)(?<!\.)",
+    re.IGNORECASE,
+)
+
+
+def extract_portfolio(text: str) -> str | None:
+    """Extract personal portfolio website / custom domain URL excluding common services."""
+    for match in PORTFOLIO_RE.finditer(text):
+        url = match.group(0).strip()
+        url_lower = url.lower()
+        if any(skip in url_lower for skip in ["linkedin.com", "github.com", "gmail.com", "yahoo.com", "outlook.com", "google.com"]):
+            continue
+        if not (url_lower.startswith("http://") or url_lower.startswith("https://")):
+            url = f"https://{url}"
+        return url
+    return None
+

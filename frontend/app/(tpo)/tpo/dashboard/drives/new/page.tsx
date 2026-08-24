@@ -95,7 +95,7 @@ export default function NewDrivePage() {
     <div className="max-w-2xl">
       <h1 className="mb-1 font-display text-2xl font-semibold">New placement drive</h1>
       <p className="mb-6 text-sm text-muted-foreground">
-        Reusing a company name links this drive to that company's existing profile.
+        Reusing a company name links this drive to that company&apos;s existing profile.
       </p>
 
       <Card>

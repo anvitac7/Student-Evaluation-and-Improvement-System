@@ -7,12 +7,14 @@ import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useStudentProfile, useUpdateStudentProfile } from "@/hooks/use-student-profile";
+import { DEPARTMENTS } from "@/lib/departments";
 
 const currentYear = new Date().getFullYear();
 
@@ -22,18 +24,22 @@ const currentYear = new Date().getFullYear();
  * submit 0 instead of being omitted. This preprocesses blank/undefined
  * input to `undefined` before coercion so the field is genuinely optional.
  */
-function optionalNumber(min: number, max: number) {
+function optionalNumber(min: number, max: number, label = "Value") {
   return z.preprocess(
     (val) => (val === "" || val === undefined || val === null ? undefined : val),
-    z.coerce.number().min(min).max(max).optional()
+    z.coerce
+      .number()
+      .min(min, `${label} cannot be less than ${min}.`)
+      .max(max, `${label} cannot be more than ${max}.`)
+      .optional()
   );
 }
 
 const profileSchema = z.object({
   name: z.string().min(1, "Name is required."),
   department: z.string().optional(),
-  batch_year: optionalNumber(currentYear - 6, currentYear + 6),
-  cgpa: optionalNumber(0, 10),
+  batch_year: optionalNumber(currentYear - 6, currentYear + 6, "Graduation year"),
+  cgpa: optionalNumber(0, 10, "CGPA"),
   phone: z.string().optional(),
   linkedin_url: z.string().url("Enter a valid URL.").optional().or(z.literal("")),
   github_url: z.string().url("Enter a valid URL.").optional().or(z.literal("")),
@@ -136,11 +142,23 @@ export default function StudentProfilePage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="department">Department</Label>
-                <Input id="department" placeholder="Computer Science" {...register("department")} />
+                <Combobox
+                  id="department"
+                  options={DEPARTMENTS}
+                  placeholder="Type or select a department"
+                  {...register("department")}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="batch_year">Graduation year</Label>
-                <Input id="batch_year" type="number" {...register("batch_year")} />
+                <Input
+                  id="batch_year"
+                  type="number"
+                  min={currentYear - 6}
+                  max={currentYear + 6}
+                  step={1}
+                  {...register("batch_year")}
+                />
                 {errors.batch_year && <p className="text-sm text-destructive">{errors.batch_year.message}</p>}
               </div>
             </div>

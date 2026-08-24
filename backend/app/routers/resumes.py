@@ -7,11 +7,19 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.database import get_database
 from app.core.deps import CurrentUser, get_current_user, require_role
 from app.models.resume import ResumeDetail, ResumeInDB, ResumeSummary, ResumeUploadResponse
-from app.repositories.profile_repositories import StudentRepository
+from app.repositories.application_repository import ApplicationRepository
+from app.repositories.drive_repository import PlacementDriveRepository
+from app.repositories.profile_repositories import StudentRepository, TPORepository
 from app.repositories.resume_repository import ResumeRepository
 from app.services.resume_parsing_service import ResumeParsingService
 from app.services.resume_service import ResumeError, ResumeService
 from app.services.storage_service import StorageService
+
+from pydantic import BaseModel
+
+from app.models.user import StudentProfileUpdateRequest
+from app.services.profile_autofill_service import ProfileAutofillService
+from app.services.student_profile_service import StudentProfileService
 
 router = APIRouter()
 
@@ -19,6 +27,11 @@ router = APIRouter()
 async def _get_resume_with_access_check(
     resume_id: str, current_user: CurrentUser, db: AsyncIOMotorDatabase
 ) -> ResumeInDB:
+    """Resume access control:
+    - Student: can only view their own resumes
+    - TPO: can only view resumes attached to applications in drives they created
+    - Admin: can view any resume (platform admin)
+    """
     resume = await ResumeRepository(db).get_by_id(resume_id)
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found.")
@@ -27,7 +40,21 @@ async def _get_resume_with_access_check(
         student = await StudentRepository(db).get_by_user_id(current_user.id)
         if not student or resume.student_id != student.id:
             raise HTTPException(status_code=403, detail="You do not have access to this resume.")
-    # TPO/Admin can view any resume — needed for candidate review (Phase 8+).
+    elif current_user.role == "tpo":
+        # TPO can only access resumes that belong to applicants in their
+        # own drives — not any arbitrary resume in the system.
+        tpo = await TPORepository(db).get_by_user_id(current_user.id)
+        if not tpo:
+            raise HTTPException(status_code=403, detail="TPO profile not found.")
+        # Check: does an application exist that references this resume,
+        # in a drive owned by this TPO?
+        application = await ApplicationRepository(db).find_one({"resume_id": resume_id})
+        if not application:
+            raise HTTPException(status_code=403, detail="You do not have access to this resume.")
+        drive = await PlacementDriveRepository(db).get_by_id(application.drive_id)
+        if not drive or drive.created_by != tpo.id:
+            raise HTTPException(status_code=403, detail="You do not have access to this resume.")
+    # Admin: unrestricted access (no extra check needed)
 
     return resume
 
@@ -148,3 +175,56 @@ async def download_resume(
 
     # Cloudinary (or any future absolute-URL backend) — just redirect.
     return RedirectResponse(resume.file_url)
+
+
+# ---------------------------------------------------------------------------
+# PHASE E — Autofill endpoints
+#
+# Security: require_role("student") + ownership check via _resolve_student_resume.
+# Never trust frontend-supplied student_id — derive it from the JWT.
+# ---------------------------------------------------------------------------
+
+async def _resolve_student_resume(
+    resume_id: str, current_user: CurrentUser, db: AsyncIOMotorDatabase
+) -> tuple:
+    """Resolve student profile and verify resume ownership from auth token."""
+    student = await StudentRepository(db).get_by_user_id(current_user.id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found.")
+    resume = await ResumeRepository(db).get_by_id(resume_id)
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found.")
+    if resume.student_id != student.id:
+        raise HTTPException(status_code=403, detail="You do not have access to this resume.")
+    return student, resume
+
+
+class AutofillSuggestionOut(BaseModel):
+    patch: StudentProfileUpdateRequest
+    education: list[dict]
+    experience: list[dict]
+
+
+@router.get("/{resume_id}/autofill-suggestion", response_model=AutofillSuggestionOut)
+async def get_autofill_suggestion(
+    resume_id: str,
+    current_user: CurrentUser = Depends(require_role("student")),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    student, resume = await _resolve_student_resume(resume_id, current_user, db)
+    service = ProfileAutofillService(db)
+    suggestion = await service.build_suggestion(student_id=str(current_user.id), resume_id=resume_id)
+    return AutofillSuggestionOut(patch=suggestion.patch, education=suggestion.education, experience=suggestion.experience)
+
+
+@router.post("/{resume_id}/autofill-apply")
+async def apply_autofill(
+    resume_id: str,
+    confirmed_patch: StudentProfileUpdateRequest,  # student may have edited fields before confirming
+    current_user: CurrentUser = Depends(require_role("student")),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    student, resume = await _resolve_student_resume(resume_id, current_user, db)
+    profile_service = StudentProfileService(db)
+    updated = await profile_service.update_profile(str(current_user.id), confirmed_patch)
+    return updated

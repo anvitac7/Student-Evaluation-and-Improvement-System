@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Award, Briefcase, ClipboardList, FileText, LayoutDashboard, User } from "lucide-react";
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 
 import { DashboardShell, initialsFrom, type DashboardNavItem } from "@/components/shared/dashboard-shell";
 import { useStudentProfile } from "@/hooks/use-student-profile";
@@ -17,6 +17,20 @@ const NAV_ITEMS: DashboardNavItem[] = [
   { href: "/dashboard/profile", label: "Profile", icon: User },
 ];
 
+function GoogleProfileCompletionRedirect() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (pathname === "/dashboard" && searchParams.get("complete_profile") === "true") {
+      router.replace("/dashboard/profile");
+    }
+  }, [pathname, searchParams, router]);
+
+  return null;
+}
+
 /**
  * middleware.ts already redirects unauthenticated/wrong-role requests away
  * from /dashboard before this even renders — this is a client-side backstop
@@ -28,23 +42,12 @@ export default function StudentDashboardLayout({ children }: { children: React.R
   const { user, isLoading, logout } = useAuth();
   const { data: profile } = useStudentProfile();
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
 
   useEffect(() => {
     if (!isLoading && (!user || user.role !== "student")) {
       router.replace("/login");
     }
   }, [isLoading, user, router]);
-
-  // GoogleSignInButton appends ?complete_profile=true on first-time Google
-  // sign-up, since Google accounts skip the registration form's
-  // department/batch_year fields entirely.
-  useEffect(() => {
-    if (pathname === "/dashboard" && searchParams.get("complete_profile") === "true") {
-      router.replace("/dashboard/profile");
-    }
-  }, [pathname, searchParams, router]);
 
   const handleLogout = async () => {
     await logout();
@@ -67,6 +70,9 @@ export default function StudentDashboardLayout({ children }: { children: React.R
       profileHref="/dashboard/profile"
       onLogout={handleLogout}
     >
+      <Suspense fallback={null}>
+        <GoogleProfileCompletionRedirect />
+      </Suspense>
       {children}
     </DashboardShell>
   );
