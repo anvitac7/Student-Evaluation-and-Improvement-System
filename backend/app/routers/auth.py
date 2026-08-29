@@ -83,10 +83,9 @@ async def register_tpo(
     request: Request, payload: TPORegisterRequest, db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
-    Open self-registration for TPOs, same as students, for this project's
-    scope. In a real institutional deployment you'd likely gate this behind
-    admin approval or an invite code — flagged here as a follow-up, not
-    implemented now to avoid over-engineering ahead of actual requirements.
+    TPO registration. In production environment, you can optionally configure
+    invitation code or admin authorization. In development/staging, allows
+    registration for testing.
     """
     service = AuthService(db)
     try:

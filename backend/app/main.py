@@ -16,7 +16,20 @@ from slowapi.errors import RateLimitExceeded
 from app.core.config import get_settings, validate_production_config
 from app.core.database import close_mongo_connection, connect_to_mongo, ensure_indexes
 from app.core.limiter import limiter
-from app.routers import analytics, assessments, auth, drives, health, matching, questions, resumes, students, gap_analysis, jd_explanation
+from app.routers import (
+    analytics,
+    applications,
+    assessments,
+    auth,
+    drives,
+    gap_analysis,
+    health,
+    jd_explanation,
+    matching,
+    questions,
+    resumes,
+    students,
+)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -80,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(assessments.router, prefix=f"{settings.API_V1_PREFIX}/assessments", tags=["Assessments"])
     app.include_router(analytics.router, prefix=f"{settings.API_V1_PREFIX}/analytics", tags=["Analytics"])
     app.include_router(matching.router, prefix=f"{settings.API_V1_PREFIX}/matching", tags=["Matching"])
+    app.include_router(applications.router, prefix=f"{settings.API_V1_PREFIX}/applications", tags=["Applications"])
     app.include_router(gap_analysis.router, prefix=settings.API_V1_PREFIX)
     app.include_router(jd_explanation.router, prefix=settings.API_V1_PREFIX)
     # Phase 11+: anti-cheat additions to assessments, admin routers

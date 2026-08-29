@@ -4,15 +4,20 @@ import { apiClient } from "@/lib/api-client";
 import type {
   ApplicationDetail,
   ApplicationStatus,
+  BulkApplicationStatusRequest,
+  BulkStatusResult,
   DriveCreateRequest,
   DriveDetail,
   DriveSummary,
   DriveUpdateRequest,
+  ScreeningSummary,
 } from "@/types/drive";
 
 const MY_DRIVES_KEY = ["drives", "mine"] as const;
 const DRIVE_DETAIL_KEY = (id: string) => ["drives", id] as const;
-const DRIVE_APPLICANTS_KEY = (driveId: string) => ["drives", driveId, "applications"] as const;
+const DRIVE_APPLICANTS_KEY = (driveId: string, params?: Record<string, unknown>) =>
+  ["drives", driveId, "applications", params] as const;
+const DRIVE_SCREENING_SUMMARY_KEY = (driveId: string) => ["drives", driveId, "screening-summary"] as const;
 
 export function useMyDrives() {
   return useQuery({
@@ -51,6 +56,19 @@ export function useUpdateDrive(driveId: string) {
   });
 }
 
+export function useCloneDrive() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (driveId: string) => {
+      const { data } = await apiClient.post<DriveDetail>(`/drives/${driveId}/clone`);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MY_DRIVES_KEY });
+    },
+  });
+}
+
 export function useDeleteDrive() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -64,11 +82,59 @@ export function useDeleteDrive() {
   });
 }
 
-export function useDriveApplicants(driveId: string) {
+export function useDriveApplicants(
+  driveId: string,
+  filters?: {
+    status?: string;
+    assessment_status?: string;
+    eligible_only?: boolean;
+    sort_by?: string;
+    sort_order?: string;
+  }
+) {
   return useQuery({
-    queryKey: DRIVE_APPLICANTS_KEY(driveId),
+    queryKey: DRIVE_APPLICANTS_KEY(driveId, filters),
     queryFn: async () => {
-      const { data } = await apiClient.get<ApplicationDetail[]>(`/drives/${driveId}/applications`);
+      const { data } = await apiClient.get<ApplicationDetail[]>(`/drives/${driveId}/applications`, {
+        params: filters,
+      });
+      return data;
+    },
+    enabled: Boolean(driveId),
+  });
+}
+
+export function useScreeningSummary(driveId: string) {
+  return useQuery({
+    queryKey: DRIVE_SCREENING_SUMMARY_KEY(driveId),
+    queryFn: async () => {
+      const { data } = await apiClient.get<ScreeningSummary>(`/drives/${driveId}/screening-summary`);
+      return data;
+    },
+    enabled: Boolean(driveId),
+  });
+}
+
+export function useTriggerScreening(driveId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await apiClient.post<ApplicationDetail[]>(`/drives/${driveId}/screen`);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["drives", driveId] });
+    },
+  });
+}
+
+export function useRecommendedShortlist(driveId: string, topN = 10) {
+  return useQuery({
+    queryKey: ["drives", driveId, "recommended-shortlist", topN],
+    queryFn: async () => {
+      const { data } = await apiClient.get<ApplicationDetail[]>(`/drives/${driveId}/recommended-shortlist`, {
+        params: { top_n: topN },
+      });
       return data;
     },
     enabled: Boolean(driveId),
@@ -78,17 +144,55 @@ export function useDriveApplicants(driveId: string) {
 export function useUpdateApplicationStatus(driveId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ applicationId, status }: { applicationId: string; status: ApplicationStatus }) => {
+    mutationFn: async ({
+      applicationId,
+      status,
+      rejectionReasons,
+      rejectionNote,
+    }: {
+      applicationId: string;
+      status: ApplicationStatus;
+      rejectionReasons?: string[];
+      rejectionNote?: string;
+    }) => {
       const { data } = await apiClient.patch<ApplicationDetail>(
         `/drives/${driveId}/applications/${applicationId}`,
-        { status }
+        { status, rejection_reasons: rejectionReasons, rejection_note: rejectionNote }
       );
       return data;
     },
-    onSuccess: (updated) => {
-      queryClient.setQueryData<ApplicationDetail[]>(DRIVE_APPLICANTS_KEY(driveId), (prev) =>
-        prev ? prev.map((a) => (a.id === updated.id ? updated : a)) : prev
-      );
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["drives", driveId] });
     },
   });
+}
+
+export function useBulkUpdateApplicationStatus(driveId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: BulkApplicationStatusRequest) => {
+      const { data } = await apiClient.patch<BulkStatusResult>(
+        `/drives/${driveId}/applications/bulk-status`,
+        payload
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["drives", driveId] });
+    },
+  });
+}
+
+export async function exportApplicationsCsv(driveId: string, filename?: string): Promise<void> {
+  const response = await apiClient.get(`/drives/${driveId}/applications/export`, {
+    responseType: "blob",
+  });
+  const blobUrl = URL.createObjectURL(response.data as Blob);
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = filename || `applicants_drive_${driveId.slice(0, 8)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(blobUrl);
 }

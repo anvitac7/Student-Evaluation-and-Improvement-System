@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.assessment import (
+    DIFFICULTY_MARKS,
     DIFFICULTY_ORDER,
     AssessmentAttemptInDB,
     AssessmentInDB,
@@ -34,9 +35,12 @@ from app.models.assessment import (
     QuestionStudentView,
     QuestionType,
 )
+from app.models.drive import AssessmentStatus
 from app.repositories.activity_log_repository import log_activity
+from app.repositories.application_repository import ApplicationRepository
 from app.repositories.assessment_repository import AssessmentRepository
 from app.repositories.attempt_repository import AttemptRepository
+from app.repositories.drive_repository import PlacementDriveRepository
 from app.repositories.profile_repositories import StudentRepository
 from app.repositories.question_repository import QuestionRepository
 from app.services.knowledge_tracing_service import KnowledgeTracingService
@@ -50,10 +54,6 @@ class AssessmentError(Exception):
 
 
 def to_student_view(question: QuestionInDB) -> QuestionStudentView:
-    # Shuffle a COPY so each student (or even each re-fetch) sees options in
-    # a different order — "unique test per student." Safe because grading
-    # in _grade() matches the submitted option TEXT against correct_answer,
-    # never a position/index, so display order never affects correctness.
     shuffled_options = random.sample(question.options, len(question.options)) if question.options else []
     return QuestionStudentView(
         id=question.id,
@@ -89,17 +89,11 @@ class AssessmentService:
         self.attempts = AttemptRepository(db)
         self.questions = QuestionRepository(db)
         self.students = StudentRepository(db)
+        self.applications = ApplicationRepository(db)
+        self.drives = PlacementDriveRepository(db)
         self.kts = KnowledgeTracingService(db)
 
     async def _resolve_student_id(self, student_user_id: str) -> str:
-        """
-        Every other module (Resumes, Applications) stores the STUDENT
-        PROFILE document's own _id as "student_id" in related collections
-        — never the User account's _id. This resolves consistently with
-        that convention, so AssessmentAttempts/KnowledgeStates line up
-        with the rest of the schema instead of using a second, different
-        ID space for "which student."
-        """
         student = await self.students.get_by_user_id(student_user_id)
         if not student:
             raise AssessmentError("Student profile not found.", 404)
@@ -111,12 +105,27 @@ class AssessmentService:
         assessment_id: str,
         fingerprint_hash: str | None = None,
         ip_address: str | None = None,
+        application_id: str | None = None,
     ) -> tuple[AssessmentAttemptInDB, QuestionInDB | None]:
         student_id = await self._resolve_student_id(student_user_id)
 
         assessment = await self.assessments.get_by_id(assessment_id)
         if not assessment:
             raise AssessmentError("Assessment not found.", 404)
+
+        # If application_id is supplied, validate it belongs to this student and matches drive
+        application = None
+        if application_id:
+            application = await self.applications.get_by_id(application_id)
+            if not application or application.student_id != student_id:
+                raise AssessmentError("Application not found for this student.", 404)
+            drive = await self.drives.get_by_id(application.drive_id)
+            if not drive:
+                raise AssessmentError("Drive not found.", 404)
+            if drive.required_assessment_id and drive.required_assessment_id != assessment.id:
+                raise AssessmentError("This assessment does not match the drive requirements.", 400)
+            if drive.assessment_deadline and drive.assessment_deadline < datetime.utcnow():
+                raise AssessmentError("The assessment deadline for this drive has passed.", 400)
 
         first_question = await self.questions.get_random_unused(
             category_ids=assessment.category_ids,
@@ -143,13 +152,24 @@ class AssessmentService:
                 "fingerprint_hash": fingerprint_hash,
             }
         )
+
+        # Link attempt to application if provided
+        if application:
+            await self.applications.update_by_id(
+                application.id,
+                {
+                    "assessment_attempt_id": attempt.id,
+                    "assessment_status": AssessmentStatus.PENDING.value,
+                },
+            )
+
         await log_activity(
             self.db,
             student_user_id,
             action="attempt_started",
             entity="assessment_attempt",
             entity_id=attempt.id,
-            metadata={"assessment_id": assessment_id},
+            metadata={"assessment_id": assessment_id, "application_id": application_id},
             ip_address=ip_address,
         )
         return attempt, first_question
@@ -162,11 +182,6 @@ class AssessmentService:
             raise AssessmentError("Attempt not found.", 404)
         if attempt.student_id != resolved_student_id:
             raise AssessmentError("This is not your attempt.", 403)
-        # Constant-time-ish comparison isn't critical here (session_token
-        # isn't a password/secret used for auth on its own — JWT already
-        # gates access; this is a second, defense-in-depth binding check
-        # that a request genuinely belongs to the browser tab that started
-        # this specific attempt, per "Unique Secure Test Session Tokens").
         if attempt.session_token != session_token:
             raise AssessmentError("Invalid session token for this attempt.", 403)
         if attempt.status != AttemptStatus.IN_PROGRESS:
@@ -174,12 +189,48 @@ class AssessmentService:
 
         assessment = await self.assessments.get_by_id(attempt.assessment_id)
         if datetime.utcnow() > attempt.started_at + timedelta(seconds=assessment.time_limit_sec):
-            await self.attempts.update_by_id(
-                attempt.id, {"status": AttemptStatus.SUBMITTED.value, "submitted_at": datetime.utcnow()}
-            )
+            await self._finalize_attempt(attempt)
             raise AssessmentError("Time limit exceeded. This attempt has been auto-submitted.", 400)
 
         return attempt, assessment
+
+    async def _finalize_attempt(self, attempt: AssessmentAttemptInDB) -> AssessmentAttemptInDB:
+        """Mark attempt submitted and update any linked application score and status."""
+        now = datetime.utcnow()
+        updated_attempt = await self.attempts.update_by_id(
+            attempt.id,
+            {
+                "status": AttemptStatus.SUBMITTED.value,
+                "submitted_at": now,
+                "current_question_id": None,
+            },
+        )
+        if not updated_attempt:
+            return attempt
+
+        # Calculate score percentage
+        total_marks = sum(a.marks_awarded for a in updated_attempt.answers)
+        max_marks = sum(DIFFICULTY_MARKS[a.difficulty_at_time] for a in updated_attempt.answers)
+        score_pct = round(100.0 * total_marks / max_marks, 1) if max_marks > 0 else 0.0
+
+        # Check if an application is linked to this attempt
+        linked_apps = await self.applications.find_many({"assessment_attempt_id": updated_attempt.id})
+        for app in linked_apps:
+            drive = await self.drives.get_by_id(app.drive_id)
+            pass_status = AssessmentStatus.PASSED.value
+            if drive and drive.assessment_min_score_pct is not None:
+                if score_pct < drive.assessment_min_score_pct:
+                    pass_status = AssessmentStatus.FAILED.value
+
+            await self.applications.update_by_id(
+                app.id,
+                {
+                    "assessment_score_pct": score_pct,
+                    "assessment_status": pass_status,
+                },
+            )
+
+        return updated_attempt
 
     async def submit_answer(
         self,
@@ -203,11 +254,6 @@ class AssessmentService:
         is_correct = _grade(question, response)
         marks_awarded = question.marks if is_correct else 0
 
-        # Response-time analysis: an implausibly fast answer is informational,
-        # not punitive — logged for a human (TPO/Admin) to review later, not
-        # auto-counted as a violation. A fast correct guess isn't necessarily
-        # cheating (some students are just quick), so this deliberately
-        # doesn't trigger auto-submit on its own.
         if time_taken_sec is not None and time_taken_sec < 3.0:
             await log_activity(
                 self.db,
@@ -218,9 +264,6 @@ class AssessmentService:
                 metadata={"question_id": question_id, "time_taken_sec": time_taken_sec},
             )
 
-        # MCQ/coding update knowledge state immediately (we have a graded
-        # signal); descriptive questions don't move mastery since they're
-        # ungraded — updating on an unknown correctness would be noise.
         if is_correct is not None:
             for skill_tag in question.skill_tags:
                 await self.kts.update_mastery(student_id, skill_tag, is_correct, question.difficulty)
@@ -246,9 +289,6 @@ class AssessmentService:
                 difficulty=next_difficulty.value,
                 exclude_ids=attempt.asked_question_ids,
             )
-            # Graceful fallback: if the ideal difficulty's pool is
-            # exhausted, try the other two difficulties rather than ending
-            # the assessment early just because one bucket ran dry.
             if not next_question:
                 for fallback_difficulty in DIFFICULTY_ORDER:
                     if fallback_difficulty == next_difficulty:
@@ -267,12 +307,13 @@ class AssessmentService:
             update_data["asked_question_ids"] = attempt.asked_question_ids + [next_question.id]
             update_data["current_question_id"] = next_question.id
             update_data["current_difficulty"] = next_difficulty.value
+            updated_attempt = await self.attempts.update_by_id(attempt.id, update_data)
         else:
-            update_data["status"] = AttemptStatus.SUBMITTED.value
-            update_data["submitted_at"] = datetime.utcnow()
-            update_data["current_question_id"] = None
+            # Assessment is finished
+            await self.attempts.update_by_id(attempt.id, update_data)
+            refreshed = await self.attempts.get_by_id(attempt.id)
+            updated_attempt = await self._finalize_attempt(refreshed)
 
-        updated_attempt = await self.attempts.update_by_id(attempt.id, update_data)
         return updated_attempt, next_question, is_correct, marks_awarded
 
     async def get_results(self, student_user_id: str, attempt_id: str) -> AssessmentAttemptInDB:
@@ -293,16 +334,6 @@ class AssessmentService:
         metadata: dict,
         ip_address: str | None = None,
     ) -> tuple[AssessmentAttemptInDB, int, int, bool]:
-        """
-        Records a client-detected violation event (tab switch, fullscreen
-        exit, devtools opened, idle timeout, etc. — the `violation_type`
-        string is client-defined; the backend doesn't need to know every
-        possible type in advance, it just counts and thresholds them).
-        Auto-submits the attempt once `max_violations` (configurable per
-        assessment, default 3) is reached.
-
-        Returns (attempt, violation_count, max_violations, auto_submitted).
-        """
         student_id = await self._resolve_student_id(student_user_id)
         attempt, assessment = await self._require_in_progress_attempt(student_id, attempt_id, session_token)
 
@@ -311,7 +342,7 @@ class AssessmentService:
             "timestamp": datetime.utcnow().isoformat(),
             "metadata": metadata,
         }
-        new_violations = attempt.violations + [violation_record]  # violations is list[dict] — no pydantic-object mixing risk here
+        new_violations = attempt.violations + [violation_record]
 
         max_violations = assessment.anti_cheat_config.get("max_violations", 3)
         violation_count = len(new_violations)
@@ -319,11 +350,11 @@ class AssessmentService:
 
         update_data: dict = {"violations": new_violations}
         if auto_submitted:
-            update_data["status"] = AttemptStatus.SUBMITTED.value
-            update_data["submitted_at"] = datetime.utcnow()
-            update_data["current_question_id"] = None
-
-        updated_attempt = await self.attempts.update_by_id(attempt.id, update_data)
+            await self.attempts.update_by_id(attempt.id, update_data)
+            refreshed = await self.attempts.get_by_id(attempt.id)
+            updated_attempt = await self._finalize_attempt(refreshed)
+        else:
+            updated_attempt = await self.attempts.update_by_id(attempt.id, update_data)
 
         await log_activity(
             self.db,

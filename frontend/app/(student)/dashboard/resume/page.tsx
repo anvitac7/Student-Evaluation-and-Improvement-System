@@ -11,6 +11,8 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { useToast } from "@/hooks/use-toast";
 import {
   downloadResumeFile,
+  useApplyAutofill,
+  useAutofillSuggestion,
   useReparseResume,
   useResumeDetail,
   useResumeHistory,
@@ -28,6 +30,10 @@ export default function ResumePage() {
   const activeId = selectedId ?? history?.find((r) => r.is_active)?.id ?? history?.[0]?.id ?? null;
 
   const { data: detail, isLoading: detailLoading } = useResumeDetail(activeId);
+  const { data: suggestion } = useAutofillSuggestion(activeId);
+  const applyAutofill = useApplyAutofill();
+  const [autofillDismissed, setAutofillDismissed] = useState(false);
+
   const uploadResume = useUploadResume();
   const reparseResume = useReparseResume();
   const { toast } = useToast();
@@ -39,9 +45,10 @@ export default function ResumePage() {
     try {
       const uploaded = await uploadResume.mutateAsync(file);
       setSelectedId(uploaded.id);
+      setAutofillDismissed(false);
       toast({
-        title: "Resume uploaded & profile updated",
-        description: `${file.name} was parsed and your profile details have been automatically filled in.`,
+        title: "Resume uploaded",
+        description: `${file.name} uploaded successfully.`,
       });
     } catch (err: any) {
       const detail = err?.response?.data?.detail ?? "Upload failed. Please try a different file.";

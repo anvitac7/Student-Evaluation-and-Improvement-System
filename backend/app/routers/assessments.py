@@ -101,6 +101,21 @@ async def student_knowledge_states(
     current_user: CurrentUser = Depends(require_role("tpo", "admin")),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
+    if current_user.role == "tpo":
+        from app.repositories.application_repository import ApplicationRepository
+        from app.repositories.drive_repository import PlacementDriveRepository
+        from app.repositories.profile_repositories import TPORepository
+
+        tpo = await TPORepository(db).get_by_user_id(current_user.id)
+        if not tpo:
+            raise HTTPException(status_code=403, detail="TPO profile not found.")
+        # Check if this student has applied to any drive owned by this TPO
+        drives = await PlacementDriveRepository(db).find_many({"created_by": tpo.id}, limit=500)
+        drive_ids = [d.id for d in drives]
+        app_match = await ApplicationRepository(db).find_one({"student_id": student_id, "drive_id": {"$in": drive_ids}})
+        if not app_match:
+            raise HTTPException(status_code=403, detail="You do not have permission to view this student's knowledge states.")
+
     kts = KnowledgeTracingService(db)
     states = await kts.knowledge_states.get_all_for_student(student_id)
     return [
@@ -126,7 +141,11 @@ async def start_assessment(
     client_ip = request.client.host if request.client else None
     try:
         attempt, first_question = await service.start_attempt(
-            current_user.id, assessment_id, fingerprint_hash=payload.fingerprint_hash, ip_address=client_ip
+            current_user.id,
+            assessment_id,
+            fingerprint_hash=payload.fingerprint_hash,
+            ip_address=client_ip,
+            application_id=payload.application_id,
         )
     except AssessmentError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

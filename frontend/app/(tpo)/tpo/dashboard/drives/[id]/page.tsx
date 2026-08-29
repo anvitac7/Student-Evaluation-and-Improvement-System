@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { useAssessments } from "@/hooks/use-assessments";
 import { useDriveDetail } from "@/hooks/use-drives";
 import { useDeleteDrive, useUpdateDrive } from "@/hooks/use-tpo-drives";
 
@@ -46,6 +47,12 @@ const editSchema = z.object({
   batch_years: z.string().optional(),
   deadline: z.string().min(1),
   selection_process: z.string().optional(),
+  required_assessment_id: z.string().optional(),
+  assessment_min_score_pct: z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : v),
+    z.coerce.number().min(0).max(100).optional()
+  ),
+  assessment_deadline: z.string().optional(),
 });
 
 type EditFormValues = z.infer<typeof editSchema>;
@@ -71,6 +78,7 @@ export default function TpoDriveDetailPage() {
   const { toast } = useToast();
 
   const { data: drive, isLoading } = useDriveDetail(driveId);
+  const { data: assessments } = useAssessments();
   const updateDrive = useUpdateDrive(driveId);
   const deleteDrive = useDeleteDrive();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -97,6 +105,9 @@ export default function TpoDriveDetailPage() {
       batch_years: drive.eligibility.batch_years.join(", "),
       deadline: toDatetimeLocal(drive.deadline),
       selection_process: drive.selection_process.join(", "),
+      required_assessment_id: drive.required_assessment_id ?? "",
+      assessment_min_score_pct: drive.assessment_min_score_pct ?? undefined,
+      assessment_deadline: drive.assessment_deadline ? toDatetimeLocal(drive.assessment_deadline) : "",
     });
   }, [drive, reset]);
 
@@ -119,6 +130,9 @@ export default function TpoDriveDetailPage() {
         },
         deadline: new Date(values.deadline).toISOString(),
         selection_process: splitCsv(values.selection_process),
+        required_assessment_id: values.required_assessment_id || undefined,
+        assessment_min_score_pct: values.assessment_min_score_pct,
+        assessment_deadline: values.assessment_deadline ? new Date(values.assessment_deadline).toISOString() : undefined,
       });
       toast({ title: "Drive updated" });
     } catch (err: any) {
@@ -265,6 +279,42 @@ export default function TpoDriveDetailPage() {
             <div className="space-y-2">
               <Label htmlFor="batch_years">Batch years (comma-separated)</Label>
               <Input id="batch_years" {...register("batch_years")} />
+            </div>
+
+            <div className="pt-4 border-t border-border space-y-4">
+              <h3 className="font-semibold text-sm">Assessment Linkage (Optional)</h3>
+              <div className="space-y-2">
+                <Label htmlFor="required_assessment_id">Attached Assessment</Label>
+                <select
+                  id="required_assessment_id"
+                  {...register("required_assessment_id")}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">No assessment required</option>
+                  {assessments?.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.title} ({a.question_pool_size} questions, {Math.round(a.time_limit_sec / 60)} min)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="assessment_min_score_pct">Cutoff Score (%)</Label>
+                  <Input
+                    id="assessment_min_score_pct"
+                    type="number"
+                    min={0}
+                    max={100}
+                    {...register("assessment_min_score_pct")}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="assessment_deadline">Assessment Deadline</Label>
+                  <Input id="assessment_deadline" type="datetime-local" {...register("assessment_deadline")} />
+                </div>
+              </div>
             </div>
           </CardContent>
           <CardFooter>
