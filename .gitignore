@@ -7,12 +7,8 @@ venv/
 *.egg-info/
 .pytest_cache/
 
-# Python virtual environments
-backend/.venv311/
-
-# Environment variables
+# Env
 .env
-.env.*
 *.env.local
 
 # Node / Next.js
@@ -32,8 +28,11 @@ out/
 .vscode/
 .idea/
 
-# Storage
-backend/storage/
+# Python virtual environments
+.venv/
+.venv311/
+venv/
 
-# MongoDB
+# Local storage
+backend/storage/
 mongodb-data/
