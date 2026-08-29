@@ -32,3 +32,18 @@ backend/storage/
 
 # MongoDB data (bind-mounted for local dev)
 mongodb-data/
+
+# Python virtual environment
+backend/.venv311/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment variables
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
