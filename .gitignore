@@ -6,8 +6,12 @@ venv/
 *.egg-info/
 .pytest_cache/
 
-# Env
+# Python virtual environments
+backend/.venv311/
+
+# Environment variables
 .env
+.env.*
 *.env.local
 
 # Node / Next.js
@@ -15,7 +19,7 @@ node_modules/
 .next/
 out/
 
-# ML artifacts (large binary files — use Git LFS)
+# ML artifacts
 *.bin
 *.pt
 *.safetensors
@@ -27,23 +31,8 @@ out/
 .vscode/
 .idea/
 
-# Storage (local dev file uploads)
+# Storage
 backend/storage/
 
-# MongoDB data (bind-mounted for local dev)
+# MongoDB
 mongodb-data/
-
-# Python virtual environment
-backend/.venv311/
-
-# Python cache
-__pycache__/
-*.pyc
-
-# Environment variables
-.env
-.env.*
-
-# IDE
-.vscode/
-.idea/
