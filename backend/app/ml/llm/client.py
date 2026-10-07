@@ -24,8 +24,7 @@ Env vars consumed (see config_additions.py):
     LLM_PRIMARY_PROVIDER / LLM_PRIMARY_MODEL / LLM_PRIMARY_BASE_URL / LLM_PRIMARY_API_KEY
     LLM_FALLBACK_PROVIDER / LLM_FALLBACK_MODEL / LLM_FALLBACK_BASE_URL / LLM_FALLBACK_API_KEY
     LLM_USE_LOCAL_OLLAMA / OLLAMA_BASE_URL / OLLAMA_MODEL
-    LLM_THINKING_MODE_NARRATIVE / LLM_THINKING_MODE_EXTRACTION
-    LLM_REQUEST_TIMEOUT_SECONDS / LLM_MAX_RETRIES
+    LLM_REQUEST_TIMEOUT_SECONDS / LLM_MAX_RETRIES / LLM_RETRY_BACKOFF_SECONDS
     EMBEDDING_PROVIDER / EMBEDDING_MODEL / EMBEDDING_BASE_URL
 """
 from __future__ import annotations
@@ -36,11 +35,14 @@ from dataclasses import dataclass
 from typing import Any
 
 import anyio
+import time
+
 import httpx
 from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError
 
 from app.core.config import get_settings
 from app.ml.llm.exceptions import LLMMalformedResponseError, LLMUnavailableError
+from app.ml.llm.metrics import llm_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -125,12 +127,48 @@ class LLMClient:
         last_err: Exception | None = None
 
         for provider in _providers_in_order():
-            try:
-                return self._call_chat(provider, system_prompt, user_prompt, thinking=thinking, json_mode=False)
-            except (APIConnectionError, APITimeoutError, APIStatusError, httpx.HTTPError) as e:
-                logger.warning("LLM provider %s failed for generate_text: %s", provider.name, e)
-                last_err = e
-                continue
+            attempts = s.LLM_MAX_RETRIES + 1
+            for attempt in range(attempts):
+                started = time.perf_counter()
+                try:
+                    text, usage = self._call_chat(
+                        provider, system_prompt, user_prompt, thinking=thinking, json_mode=False
+                    )
+                except (APIConnectionError, APITimeoutError, APIStatusError, httpx.HTTPError) as e:
+                    last_err = e
+                    latency_ms = (time.perf_counter() - started) * 1000
+                    llm_metrics.record_call(
+                        provider.name,
+                        latency_ms=latency_ms,
+                        failed=True,
+                        retries=attempt,
+                        error=str(e),
+                    )
+                    logger.warning(
+                        "llm.chat provider=%s model=%s status=fail latency_ms=%.0f attempt=%d/%d error=%s",
+                        provider.name, provider.model, latency_ms, attempt + 1, attempts, e,
+                    )
+                    if self._is_retryable(e) and attempt < attempts - 1:
+                        delay = s.LLM_RETRY_BACKOFF_SECONDS * (2**attempt)
+                        time.sleep(delay)
+                        continue
+                    break  # exhausted, or not retryable -> try next provider
+
+                latency_ms = (time.perf_counter() - started) * 1000
+                llm_metrics.record_call(
+                    provider.name,
+                    latency_ms=latency_ms,
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    retries=attempt,
+                )
+                logger.info(
+                    "llm.chat provider=%s model=%s status=ok latency_ms=%.0f attempt=%d "
+                    "prompt_tokens=%d completion_tokens=%d",
+                    provider.name, provider.model, latency_ms, attempt + 1,
+                    usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0),
+                )
+                return text
 
         raise LLMUnavailableError(f"All LLM providers unavailable for text generation: {last_err}")
 
@@ -154,22 +192,59 @@ class LLMClient:
 
         last_err: Exception | None = None
         for provider in _providers_in_order():
-            for attempt in range(s.LLM_MAX_RETRIES + 1):
+            attempts = s.LLM_MAX_RETRIES + 1
+            for attempt in range(attempts):
+                started = time.perf_counter()
                 try:
-                    raw = self._call_chat(
+                    raw, usage = self._call_chat(
                         provider, full_system, user_prompt, thinking=False, json_mode=True
                     )
-                    return _parse_json_loose(raw)
+                    parsed = _parse_json_loose(raw)
                 except LLMMalformedResponseError as e:
+                    latency_ms = (time.perf_counter() - started) * 1000
+                    llm_metrics.record_call(
+                        provider.name, latency_ms=latency_ms, failed=True,
+                        retries=attempt, error=str(e),
+                    )
                     logger.warning(
-                        "Malformed JSON from %s (attempt %d): %s", provider.name, attempt, e
+                        "llm.json provider=%s model=%s status=malformed latency_ms=%.0f "
+                        "attempt=%d/%d error=%s",
+                        provider.name, provider.model, latency_ms, attempt + 1, attempts, e,
                     )
                     last_err = e
                     continue
                 except (APIConnectionError, APITimeoutError, APIStatusError, httpx.HTTPError) as e:
-                    logger.warning("LLM provider %s failed for generate_json: %s", provider.name, e)
                     last_err = e
-                    break  # don't retry a dead provider, move to fallback
+                    latency_ms = (time.perf_counter() - started) * 1000
+                    llm_metrics.record_call(
+                        provider.name, latency_ms=latency_ms, failed=True,
+                        retries=attempt, error=str(e),
+                    )
+                    logger.warning(
+                        "llm.chat provider=%s model=%s status=fail latency_ms=%.0f attempt=%d/%d error=%s",
+                        provider.name, provider.model, latency_ms, attempt + 1, attempts, e,
+                    )
+                    if self._is_retryable(e) and attempt < attempts - 1:
+                        delay = s.LLM_RETRY_BACKOFF_SECONDS * (2**attempt)
+                        time.sleep(delay)
+                        continue
+                    break  # exhausted, or not retryable -> next provider
+
+                latency_ms = (time.perf_counter() - started) * 1000
+                llm_metrics.record_call(
+                    provider.name,
+                    latency_ms=latency_ms,
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    retries=attempt,
+                )
+                logger.info(
+                    "llm.json provider=%s model=%s status=ok latency_ms=%.0f attempt=%d "
+                    "prompt_tokens=%d completion_tokens=%d",
+                    provider.name, provider.model, latency_ms, attempt + 1,
+                    usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0),
+                )
+                return parsed
 
         raise LLMUnavailableError(f"All LLM providers unavailable/malformed for JSON generation: {last_err}")
 
@@ -181,25 +256,42 @@ class LLMClient:
         if not texts:
             return []
 
+        started = time.perf_counter()
         try:
             if s.EMBEDDING_PROVIDER == "openai":
-                return self._embed_openai_compatible(texts)
-            return self._embed_ollama(texts)
+                vectors = self._embed_openai_compatible(texts)
+            else:
+                vectors = self._embed_ollama(texts)
         except (httpx.HTTPError, KeyError, IndexError) as e:
-            logger.warning("Embedding provider failed: %s", e)
+            llm_metrics.record_embed(failed=True)
+            latency_ms = (time.perf_counter() - started) * 1000
+            logger.warning(
+                "llm.embed provider=%s model=%s status=fail latency_ms=%.0f error=%s",
+                s.EMBEDDING_PROVIDER, s.EMBEDDING_MODEL, latency_ms, e,
+            )
             raise LLMUnavailableError(f"Embedding model unavailable: {e}")
 
-    def _embed_ollama(self, texts: list[str]) -> list[list[float]]:
-        """Ollama's native /api/embed shape — still the default, because it
-        is the only option that needs no API key and no network."""
-        s = get_settings()
-        resp = httpx.post(
-            f"{s.EMBEDDING_BASE_URL}/api/embed",
-            json={"model": s.EMBEDDING_MODEL, "input": texts},
-            timeout=s.LLM_REQUEST_TIMEOUT_SECONDS,
+        llm_metrics.record_embed()
+        latency_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "llm.embed provider=%s model=%s status=ok latency_ms=%.0f texts=%d dim=%d",
+            s.EMBEDDING_PROVIDER, s.EMBEDDING_MODEL, latency_ms,
+            len(texts), len(vectors[0]) if vectors else 0,
         )
-        resp.raise_for_status()
-        return resp.json()["embeddings"]
+        return vectors
+
+    def _embed_ollama(self, texts: list[str]) -> list[list[float]]:
+        """Ollama's native /api/embed shape — still supported, and still the
+        only option that needs no API key and no network."""
+        s = get_settings()
+        return self._post_with_retry(
+            lambda: httpx.post(
+                f"{s.EMBEDDING_BASE_URL}/api/embed",
+                json={"model": s.EMBEDDING_MODEL, "input": texts},
+                timeout=s.LLM_REQUEST_TIMEOUT_SECONDS,
+            ),
+            provider_name="ollama",
+        ).json()["embeddings"]
 
     def _embed_openai_compatible(self, texts: list[str]) -> list[list[float]]:
         """Any OpenAI-compatible /embeddings endpoint. Gemini's compatibility
@@ -210,33 +302,90 @@ class LLMClient:
         if s.EMBEDDING_API_KEY:
             headers["Authorization"] = f"Bearer {s.EMBEDDING_API_KEY}"
 
-        resp = httpx.post(
-            f"{s.EMBEDDING_BASE_URL.rstrip('/')}/embeddings",
-            json={"model": s.EMBEDDING_MODEL, "input": texts},
-            headers=headers,
-            timeout=s.LLM_REQUEST_TIMEOUT_SECONDS,
+        resp = self._post_with_retry(
+            lambda: httpx.post(
+                f"{s.EMBEDDING_BASE_URL.rstrip('/')}/embeddings",
+                json={"model": s.EMBEDDING_MODEL, "input": texts},
+                headers=headers,
+                timeout=s.LLM_REQUEST_TIMEOUT_SECONDS,
+            ),
+            provider_name="embeddings",
         )
-        resp.raise_for_status()
         # OpenAI shape: {"data": [{"embedding": [...]}, ...]}. Ordered by
         # the "index" field rather than trusting response order.
         rows = sorted(resp.json()["data"], key=lambda d: d.get("index", 0))
         return [row["embedding"] for row in rows]
 
+    @staticmethod
+    def _post_with_retry(post, *, provider_name: str):
+        """Shared retry wrapper for the raw-httpx embedding calls, which
+        bypass the openai SDK and so bypass its own retry handling."""
+        s = get_settings()
+        attempts = s.LLM_MAX_RETRIES + 1
+        last_err: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                resp = post()
+                resp.raise_for_status()
+                return resp
+            except (httpx.HTTPError,) as e:
+                last_err = e
+                if LLMClient._is_retryable(e) and attempt < attempts - 1:
+                    delay = s.LLM_RETRY_BACKOFF_SECONDS * (2**attempt)
+                    logger.warning(
+                        "llm.embed.retry provider=%s attempt=%d/%d backoff_s=%.1f error=%s",
+                        provider_name, attempt + 1, attempts, delay, e,
+                    )
+                    time.sleep(delay)
+                    continue
+                break
+        raise last_err  # type: ignore[misc]
+
     # ------------------------------------------------------------------
     # internal
     # ------------------------------------------------------------------
+    @staticmethod
+    def _is_retryable(exc: Exception) -> bool:
+        """429/5xx/connection errors are worth another go; 4xx auth/validation
+        errors are not, and retrying them just burns quota and time.
+
+        The previous code only retried malformed JSON, so a transient 429 or
+        503 (both of which real providers return routinely under load)
+        aborted the whole request on the first occurrence.
+        """
+        if isinstance(exc, (APIConnectionError, APITimeoutError, httpx.HTTPError)):
+            return True
+        if isinstance(exc, APIStatusError):
+            return exc.status_code == 429 or exc.status_code >= 500
+        return False
+
     def _call_chat(
         self, provider: ProviderConfig, system_prompt: str, user_prompt: str, *, thinking: bool, json_mode: bool
-    ) -> str:
+    ) -> tuple[str, dict[str, int]]:
+        """Returns (content, usage).
+
+        `usage` is best-effort: the OpenAI-compatible shape puts token counts
+        on `response.usage`, but some providers omit it entirely or rename the
+        fields, so every access here is defensive and callers must tolerate
+        an empty dict. Missing usage is reported as zeros rather than an
+        exception — losing a token count is never worth failing a request.
+        """
         client = _client_for(provider)
 
         extra_body: dict[str, Any] = {}
-        # Qwen3's hybrid thinking-mode toggle. Nemotron/other providers
-        # silently ignore unknown extra_body fields via OpenAI SDK's
-        # passthrough, but we only send it for qwen-flavoured models to be
-        # safe and explicit.
-        if "qwen" in provider.model.lower():
+        # Reasoning-mode toggle. Each provider family spells this differently,
+        # and sending the wrong key is silently ignored — so we send only the
+        # one that matches, rather than assuming a universal flag:
+        #   qwen*  -> enable_thinking (OpenRouter/Ollama qwen3)
+        #   gemini -> reasoning_effort  (v1beta/openai compatibility layer)
+        # Anything else gets nothing, because a wrong key would be ignored
+        # anyway and this used to mislead readers into thinking `thinking`
+        # did something on every provider.
+        model_l = provider.model.lower()
+        if "qwen" in model_l:
             extra_body["enable_thinking"] = thinking
+        elif "gemini" in model_l:
+            extra_body["reasoning_effort"] = "medium" if thinking else "none"
 
         response = client.chat.completions.create(
             model=provider.model,
@@ -250,7 +399,16 @@ class LLMClient:
         content = response.choices[0].message.content or ""
         if json_mode and not content.strip():
             raise LLMMalformedResponseError("Empty response body")
-        return content
+
+        usage: dict[str, int] = {}
+        raw_usage = getattr(response, "usage", None)
+        if raw_usage is not None:
+            usage = {
+                "prompt_tokens": int(getattr(raw_usage, "prompt_tokens", 0) or 0),
+                "completion_tokens": int(getattr(raw_usage, "completion_tokens", 0) or 0),
+                "total_tokens": int(getattr(raw_usage, "total_tokens", 0) or 0),
+            }
+        return content, usage
 
 
 def _parse_json_loose(raw: str) -> dict[str, Any]:

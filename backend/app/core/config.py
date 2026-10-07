@@ -90,16 +90,22 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "qwen3:8b"
 
-    # Qwen3 hybrid "thinking mode" — ON for narrative calls (gap analysis,
-    # JD explanation), OFF for the skill-extraction JSON call. Nemotron
-    # ignores this flag (its client branch just won't send it).
-    LLM_THINKING_MODE_NARRATIVE: bool = True
-    LLM_THINKING_MODE_EXTRACTION: bool = False
+    # NOTE: LLM_THINKING_MODE_NARRATIVE / _EXTRACTION were removed. They were
+    # declared here and mentioned in the LLM client docstring but read by
+    # nothing — reasoning mode is chosen per call site via the `thinking=`
+    # kwarg, and the client translates that into whichever key the active
+    # provider actually understands (enable_thinking for qwen,
+    # reasoning_effort for Gemini). Re-adding env knobs here would just
+    # create a second, misleading source of truth.
 
     # Timeouts / retries — every LLM call must fail SOFTLY (see
     # llm/exceptions.py). No call should hang the request thread forever.
     LLM_REQUEST_TIMEOUT_SECONDS: int = 30
-    LLM_MAX_RETRIES: int = 1
+    # Applies to transient failures only: 429, 5xx, connection and timeout
+    # errors. 4xx auth/validation errors are never retried.
+    LLM_MAX_RETRIES: int = 2
+    # Exponential backoff base: attempt N waits base * 2**N seconds.
+    LLM_RETRY_BACKOFF_SECONDS: float = 1.5
 
     # --- Embeddings (separate small model — NOT the chat model) ----------
     # EMBEDDING_PROVIDER selects the request SHAPE, since the two families
@@ -113,8 +119,10 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "nomic-embed-text"           # or bge-small / gemini-embedding-001
     EMBEDDING_BASE_URL: str = "http://localhost:11434"
     EMBEDDING_API_KEY: str = ""                         # required when PROVIDER=openai
-    # Informational only — nothing currently validates against it (the RAG
-    # store reads whatever dimension the provider returns). Values:
+    # Informational only — nothing validates against it; the RAG store reads
+    # whatever dimension the provider returns, and silently mixing dimensions
+    # from two different models would corrupt every cosine score. Recorded so
+    # the value is documented rather than guessed.
     #   nomic-embed-text=768, bge-small=384, gemini-embedding-001=3072
     EMBEDDING_DIM: int = 768
 

@@ -16,6 +16,7 @@ from slowapi.errors import RateLimitExceeded
 from app.core.config import get_settings, validate_production_config
 from app.core.database import close_mongo_connection, connect_to_mongo, ensure_indexes
 from app.core.limiter import limiter
+from app.core.request_context import RequestIdMiddleware, configure_logging
 from app.routers import (
     analytics,
     applications,
@@ -26,7 +27,9 @@ from app.routers import (
     health,
     insights,
     jd_explanation,
+    knowledge_admin,
     matching,
+    observability,
     questions,
     resumes,
     students,
@@ -37,6 +40,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+# Request-id-aware logging must be installed before anything else logs, and
+# BEFORE the FastAPI app is constructed, so the access log and any startup
+# errors already carry a correlation id.
+configure_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -61,6 +69,10 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+
+    # Outermost middleware, so every other layer (CORS, rate limiting, the
+    # global exception handler) executes inside a bound request id.
+    app.add_middleware(RequestIdMiddleware)
 
     # --- Rate limiting ---
     app.state.limiter = limiter
@@ -97,6 +109,8 @@ def create_app() -> FastAPI:
     app.include_router(applications.router, prefix=f"{settings.API_V1_PREFIX}/applications", tags=["Applications"])
     app.include_router(gap_analysis.router, prefix=settings.API_V1_PREFIX)
     app.include_router(insights.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(observability.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(knowledge_admin.router, prefix=settings.API_V1_PREFIX)
     app.include_router(jd_explanation.router, prefix=settings.API_V1_PREFIX)
     # Phase 11+: anti-cheat additions to assessments, admin routers
 

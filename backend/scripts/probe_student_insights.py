@@ -1,16 +1,27 @@
-"""Live-ish test of the student insights endpoint against a real MongoDB.
+"""Live-server smoke script for the student insights endpoint.
 
-Unlike the mongomock-based suite, this runs against the actual dev database
-via a real HTTP call, because the aggregation logic depends on ObjectId
-round-tripping and cross-collection joins that mongomock papers over.
+THIS IS NOT A PYTEST TEST. It requires a running backend (:8000), a running
+MongoDB, and it WRITES real data (users, questions, assessments, attempts)
+into whatever database it is pointed at. It deliberately lives in scripts/
+rather than tests/ for exactly that reason: when it was named
+tests/test_student_insights.py, pytest collected zero tests from it while
+looking like coverage it was not providing.
 
-Run with the backend already listening on :8000.
+Run manually from backend/ with the backend already listening:
+
+    .venv\\Scripts\\python.exe scripts/probe_student_insights.py
 """
 import json
+import os
+import sys
 import urllib.error
 import urllib.request
 
-BASE = "http://localhost:8000/api/v1"
+# Make `app` importable when run as `python scripts/probe_student_insights.py`
+# from backend/ without installing the package.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+BASE = os.environ.get("PLACER_API", "http://localhost:8000/api/v1")
 STU_EMAIL = "insights.stu@college.edu"
 STU_PASS = "Student@12345"
 ADMIN_EMAIL = "admin@placer.edu"

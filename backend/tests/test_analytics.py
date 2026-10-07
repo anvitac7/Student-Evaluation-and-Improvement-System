@@ -2,11 +2,43 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from app.models.drive import VALID_STATUS_TRANSITIONS, ApplicationStatus
 from app.models.user import AdminRegisterRequest
 from app.services.auth_service import AuthService
 
 FUTURE_DEADLINE = (datetime.utcnow() + timedelta(days=30)).isoformat()
 MINIMAL_PDF_BYTES = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"
+
+
+@pytest.mark.asyncio
+async def test_status_transitions_reject_skipping_shortlisting(client):
+    """Pins the status state machine itself.
+
+    An application cannot jump applied -> selected; it must be shortlisted
+    first. A test elsewhere once assumed otherwise and failed with a
+    misleading assertion rather than the real cause, so the rule is
+    asserted directly here.
+    """
+    tpo_token = await _register_login_tpo(client, "transitions.tpo@college.edu")
+    drive = await client.post("/api/v1/drives", headers=_auth_headers(tpo_token), json=_drive_payload())
+    drive_id = drive.json()["id"]
+
+    application_id = await _apply_with_new_student(client, drive_id, "transitions.applicant@college.edu")
+
+    skipped = await client.patch(
+        f"/api/v1/drives/{drive_id}/applications/{application_id}",
+        headers=_auth_headers(tpo_token),
+        json={"status": "selected"},
+    )
+    assert skipped.status_code == 400
+    assert "shortlisted" in skipped.json()["detail"].lower()
+
+    # The declared table must agree with the enforced behaviour.
+    assert ApplicationStatus.SELECTED not in VALID_STATUS_TRANSITIONS[ApplicationStatus.APPLIED]
+    assert ApplicationStatus.SELECTED in VALID_STATUS_TRANSITIONS[ApplicationStatus.SHORTLISTED]
+    # Terminal states have nowhere to go.
+    assert VALID_STATUS_TRANSITIONS[ApplicationStatus.SELECTED] == set()
+    assert VALID_STATUS_TRANSITIONS[ApplicationStatus.REJECTED] == set()
 
 
 async def _register_login_student(client, email):
@@ -129,11 +161,26 @@ async def test_admin_analytics_counts_placements_and_applications(client):
     drive_id = drive.json()["id"]
 
     application_id = await _apply_with_new_student(client, drive_id, "counts.applicant@college.edu")
-    await client.patch(
+
+    # Walk the legal transition path. VALID_STATUS_TRANSITIONS permits
+    # applied -> shortlisted -> selected but NOT applied -> selected, so the
+    # original single PATCH was rejected with a 400 that this test never
+    # checked — it went on to assert placed_students >= 1 and failed with a
+    # misleading "0 >= 1" instead of the real cause. Each step's status is
+    # now asserted so a rejected transition fails here, loudly.
+    shortlisted = await client.patch(
+        f"/api/v1/drives/{drive_id}/applications/{application_id}",
+        headers=_auth_headers(tpo_token),
+        json={"status": "shortlisted"},
+    )
+    assert shortlisted.status_code == 200, shortlisted.text
+
+    selected = await client.patch(
         f"/api/v1/drives/{drive_id}/applications/{application_id}",
         headers=_auth_headers(tpo_token),
         json={"status": "selected"},
     )
+    assert selected.status_code == 200, selected.text
 
     response = await client.get("/api/v1/analytics/admin", headers=_auth_headers(admin_token))
     assert response.status_code == 200

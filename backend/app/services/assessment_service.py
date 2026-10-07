@@ -213,8 +213,13 @@ class AssessmentService:
         max_marks = sum(DIFFICULTY_MARKS[a.difficulty_at_time] for a in updated_attempt.answers)
         score_pct = round(100.0 * total_marks / max_marks, 1) if max_marks > 0 else 0.0
 
-        # Check if an application is linked to this attempt
-        linked_apps = await self.applications.find_many({"assessment_attempt_id": updated_attempt.id})
+        # Check if an application is linked to this attempt. One attempt can in
+        # principle be linked to several applications, so this must not be
+        # capped at the repository default — a missed row here means an
+        # application silently never gets its pass/fail status updated.
+        linked_apps = await self.applications.find_many(
+            {"assessment_attempt_id": updated_attempt.id}, limit=100
+        )
         for app in linked_apps:
             drive = await self.drives.get_by_id(app.drive_id)
             pass_status = AssessmentStatus.PASSED.value

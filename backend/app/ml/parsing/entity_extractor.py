@@ -37,25 +37,42 @@ def _get_nlp():
 
 
 def _heuristic_name(text: str) -> str | None:
-    """Finds the most likely candidate name among the first 10 non-empty lines:
-    no digits, no '@', no URLs or symbols, 1-4 words."""
+    """Best-effort name guess from the FIRST non-empty line, used only when
+    spaCy NER is unavailable.
+
+    Only the first line is considered, deliberately. This used to scan the
+    first 10 lines looking for anything name-shaped, which meant a resume
+    beginning with contact info would fall through to an arbitrary later line
+    and return prose like "Some other content" as the person's name. A name
+    belongs at the top of a resume; if the top isn't name-shaped, the honest
+    answer is None (the caller leaves the field null), not a confident guess
+    at the second line. Returning None is handled gracefully downstream,
+    whereas a wrong name propagates into the profile UI and exports.
+
+    Rejects: digits, '@', URLs, >4 words, and a set of document-section
+    words ("Resume", "Contact", ...) that are never part of a name.
+    """
     blacklist_words = {
         "resume", "curriculum", "vitae", "cv", "page", "profile", "contact",
         "email", "phone", "address", "education", "experience", "skills",
         "projects", "summary", "objective", "about", "portfolio", "github", "linkedin"
     }
 
-    lines = [l.strip() for l in text.splitlines() if l.strip()][:10]
-    for line in lines:
-        if "@" in line or any(ch.isdigit() for ch in line) or "http" in line.lower() or "www." in line.lower() or ".com" in line.lower():
-            continue
-        cleaned = re.sub(r"[^A-Za-z\s.\-']", "", line).strip()
-        words = cleaned.split()
-        if 1 <= len(words) <= 4:
-            if not any(w.lower() in blacklist_words for w in words):
-                # Valid name candidate
-                return " ".join(words)
-    return None
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return None
+
+    line = lines[0]
+    if "@" in line or any(ch.isdigit() for ch in line) or "http" in line.lower() or "www." in line.lower() or ".com" in line.lower():
+        return None
+
+    cleaned = re.sub(r"[^A-Za-z\s.\-']", "", line).strip()
+    words = cleaned.split()
+    if not 1 <= len(words) <= 4:
+        return None
+    if any(w.lower() in blacklist_words for w in words):
+        return None
+    return " ".join(words)
 
 
 

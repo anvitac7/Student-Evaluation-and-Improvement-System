@@ -153,8 +153,54 @@ async def test_tpo_can_view_but_not_upload_student_resume(client):
     resume_id = upload.json()["id"]
 
     tpo_token = await _register_login_tpo(client, email="viewer.tpo@college.edu")
+
+    # A TPO may only open a resume that is attached to an application in one
+    # of THIS TPO's own drives — not any resume in the system. This test used
+    # to assert a blanket 200 with no such relationship, and started failing
+    # when the access rule was tightened. The endpoint was correct; the test
+    # was stale.
+    drive = await client.post(
+        "/api/v1/drives",
+        headers=_auth_headers(tpo_token),
+        json={
+            "company_name": "ResumeViewer Corp",
+            "job_title": "Engineer",
+            "description": "Build things",
+            "jd_text": "We need an engineer skilled in Python.",
+            "required_skills": ["Python"],
+            "package": "10 LPA",
+            "location": "Remote",
+            "eligibility": {},
+            "deadline": "2099-01-01T00:00:00Z",
+        },
+    )
+    assert drive.status_code == 201, drive.text
+    applied = await client.post(
+        f"/api/v1/drives/{drive.json()['id']}/apply", headers=_auth_headers(student_token)
+    )
+    assert applied.status_code == 201, applied.text
+
     response = await client.get(f"/api/v1/resumes/{resume_id}", headers=_auth_headers(tpo_token))
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_tpo_cannot_view_unrelated_student_resume(client):
+    """Companion to the test above: a TPO with no drive/application from this
+    student must be refused. Without this, the ownership check could be
+    deleted entirely and the suite would still be green."""
+    student_token = await _register_login_student(client, email="unrelated@college.edu")
+    upload = await client.post(
+        "/api/v1/resumes",
+        headers=_auth_headers(student_token),
+        files={"file": ("resume.pdf", MINIMAL_PDF_BYTES, "application/pdf")},
+    )
+    assert upload.status_code == 201, upload.text
+    resume_id = upload.json()["id"]
+
+    other_tpo_token = await _register_login_tpo(client, email="stranger.tpo@college.edu")
+    response = await client.get(f"/api/v1/resumes/{resume_id}", headers=_auth_headers(other_tpo_token))
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio

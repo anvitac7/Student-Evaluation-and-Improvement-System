@@ -7,12 +7,13 @@ answers a different question from /assessments/attempts/{id}/gap-analysis:
 that one is scoped to a single attempt and explains a single score, this one
 is scoped to the whole history and drives a revision plan.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
 from app.core.database import get_database
 from app.core.deps import CurrentUser, require_role
+from app.core.limiter import limiter
 from app.services.student_insights_service import StudentInsightsService
 
 router = APIRouter(prefix="/insights", tags=["Student Insights"])
@@ -55,7 +56,9 @@ class InsightsOut(BaseModel):
 
 
 @router.get("/me", response_model=InsightsOut)
+@limiter.limit("20/minute")
 async def my_insights(
+    request: Request,
     current_user: CurrentUser = Depends(require_role("student")),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):

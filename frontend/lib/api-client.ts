@@ -12,6 +12,11 @@ export const apiClient = axios.create({
   baseURL: "/api/backend",
   withCredentials: true, // send the httpOnly refresh-token cookie
   headers: { "Content-Type": "application/json" },
+  // Axios defaults to NO timeout (0 = wait forever). The insights endpoint
+  // can legitimately take 30-90s on a cold LLM call, so the ceiling sits
+  // above that — but not at infinity, or a wedged backend leaves the UI
+  // spinning indefinitely with no error the user can act on.
+  timeout: 120_000,
 });
 
 apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {

@@ -45,14 +45,33 @@ class BaseRepository(Generic[ModelT]):
         self,
         query: dict[str, Any] | None = None,
         page: int = 1,
-        limit: int = 20,
+        limit: int | None = None,
         sort: list[tuple[str, int]] | None = None,
     ) -> list[ModelT]:
+        """Read a slice of a collection.
+
+        `limit=None` (the default) means NO CAP — the caller must decide
+        whether an unbounded read is safe.
+
+        This default was previously `limit=20`, which was a silent-data-loss
+        footgun: any caller that forgot to pass a limit got exactly 20
+        documents with no error and no indication of truncation. Two call
+        sites did exactly that, and in both cases the aggregate numbers they
+        fed (a student's whole assessment history; the applications linked to
+        an attempt) were quietly computed from a partial view. Unbounded is
+        the safer default for that failure mode: it is visible in review
+        ("this reads everything") rather than invisible at runtime.
+
+        Callers reading user-facing list endpoints should still pass an
+        explicit `limit`, and anything unbounded should be scoped by a
+        selective query.
+        """
         query = query or {}
         cursor = self.collection.find(query)
         if sort:
             cursor = cursor.sort(sort)
-        cursor = cursor.skip((page - 1) * limit).limit(limit)
+        if limit is not None:
+            cursor = cursor.skip((page - 1) * limit).limit(limit)
         return [self.model.model_validate(doc) async for doc in cursor]
 
     async def count(self, query: dict[str, Any] | None = None) -> int:

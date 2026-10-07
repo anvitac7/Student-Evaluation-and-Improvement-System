@@ -1,5 +1,11 @@
 import pytest
 
+from tests.pdf_builder import build_test_pdf
+
+# Minimal valid PDF, same approach test_drives.py uses — keeps these tests
+# independent of the resume-parsing stack.
+MINIMAL_PDF_BYTES = build_test_pdf(["Test Student", "test@college.edu", "Skills: Python"])
+
 
 async def _register_login_admin(client, email="kts.admin@college.edu"):
     from app.core import database as db_module
@@ -504,8 +510,79 @@ async def test_tpo_can_view_student_knowledge_states(client):
     student_doc = await db_module.mongodb.db.students.find_one({"user_id": me.json()["id"]})
 
     tpo_token = await _register_login_tpo(client, "tpoview.tpo@college.edu")
+
+    # A TPO may only see a student's knowledge states once that student has
+    # applied to one of THIS TPO's drives. This test used to assert a blanket
+    # 200 with no such relationship, which is why it started failing when the
+    # endpoint was correctly tightened — the endpoint was right, the test was
+    # stale. Establish the relationship the access rule actually requires.
+    drive = await client.post(
+        "/api/v1/drives",
+        headers=_auth_headers(tpo_token),
+        json={
+            "company_name": "TpoView Corp",
+            "job_title": "Engineer",
+            "description": "Build things",
+            "jd_text": "We need an engineer skilled in Python.",
+            "required_skills": ["Python"],
+            "package": "10 LPA",
+            "location": "Remote",
+            "eligibility": {},
+            "deadline": "2099-01-01T00:00:00Z",
+        },
+    )
+    assert drive.status_code == 201, drive.text
+    drive_id = drive.json()["id"]
+
+    # Applying requires an active resume.
+    upload = await client.post(
+        "/api/v1/resumes",
+        headers=_auth_headers(student_token),
+        files={"file": ("resume.pdf", MINIMAL_PDF_BYTES, "application/pdf")},
+    )
+    assert upload.status_code == 201, upload.text
+
+    applied = await client.post(
+        f"/api/v1/drives/{drive_id}/apply", headers=_auth_headers(student_token)
+    )
+    assert applied.status_code == 201, applied.text
+
     response = await client.get(
         f"/api/v1/assessments/knowledge-states/{str(student_doc['_id'])}", headers=_auth_headers(tpo_token)
     )
     assert response.status_code == 200
     assert len(response.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_tpo_cannot_view_unrelated_student_knowledge_states(client):
+    """The other half of the contract, and the one worth locking down: a TPO
+    must NOT be able to read an arbitrary student's mastery data just because
+    they hold a TPO account. Without this, the permission check above would
+    pass even if it were simply absent."""
+    admin_token = await _register_login_admin(client, "tpoview2.admin@college.edu")
+    assessment_id = await _setup_assessment_with_one_question_per_difficulty(client, admin_token, "TpoViewCat2")
+
+    student_token = await _register_login_student(client, "tpoview2.student@college.edu")
+    start = await _start_attempt(client, student_token, assessment_id)
+    await _answer(
+        client,
+        student_token,
+        start.json()["attempt_id"],
+        start.json()["session_token"],
+        start.json()["next_question"]["id"],
+        "A",
+    )
+
+    from app.core import database as db_module
+
+    me = await client.get("/api/v1/auth/me", headers=_auth_headers(student_token))
+    student_doc = await db_module.mongodb.db.students.find_one({"user_id": me.json()["id"]})
+
+    # A different TPO, with no drive and no application from this student.
+    other_tpo_token = await _register_login_tpo(client, "tpoview2.tpo@college.edu")
+    response = await client.get(
+        f"/api/v1/assessments/knowledge-states/{str(student_doc['_id'])}",
+        headers=_auth_headers(other_tpo_token),
+    )
+    assert response.status_code == 403
