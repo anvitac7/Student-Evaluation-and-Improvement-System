@@ -91,7 +91,7 @@ class JDExplanationService:
         }
 
         try:
-            narrative = llm_client.generate_text(_SYSTEM_PROMPT, str(facts), thinking=True)
+            narrative = await llm_client.generate_text_async(_SYSTEM_PROMPT, str(facts), thinking=True)
         except LLMUnavailableError:
             logger.warning(
                 "LLM unavailable for JD explanation (resume=%s drive=%s) — breakdown only.",

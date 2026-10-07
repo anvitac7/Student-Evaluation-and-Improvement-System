@@ -6,6 +6,7 @@ import type {
   AttemptResultResponse,
   KnowledgeStateResponse,
   StartAttemptResponse,
+  StudentInsightsResponse,
   SubmitAnswerResponse,
   ViolationReportResponse,
 } from "@/types/assessment";
@@ -15,6 +16,17 @@ export function useAssessments() {
     queryKey: ["assessments"],
     queryFn: async () => {
       const { data } = await apiClient.get<AssessmentResponse[]>("/assessments");
+      return data;
+    },
+  });
+}
+
+/** Cross-attempt focus areas + study guide for the logged-in student. */
+export function useStudentInsights() {
+  return useQuery({
+    queryKey: ["insights", "me"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<StudentInsightsResponse>("/insights/me");
       return data;
     },
   });

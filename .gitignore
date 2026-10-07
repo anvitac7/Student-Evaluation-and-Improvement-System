@@ -15,6 +15,8 @@ venv/
 node_modules/
 .next/
 out/
+# TypeScript incremental build cache — machine-local, regenerated on build
+tsconfig.tsbuildinfo
 
 # ML artifacts
 *.bin
@@ -36,3 +38,5 @@ venv/
 # Local storage
 backend/storage/
 mongodb-data/
+# Local tooling
+*.exe

@@ -54,7 +54,7 @@ class KnowledgeStore:
         that triggered it (question creation, JD save, etc.).
         """
         try:
-            [vector] = llm_client.embed([text])
+            [vector] = await llm_client.embed_async([text])
         except LLMUnavailableError:
             logger.warning("Embedding unavailable — chunk not ingested (source_id=%s)", source_id)
             return False
@@ -88,7 +88,7 @@ class KnowledgeStore:
 
         query_text = ", ".join(query_skills)
         try:
-            [query_vector] = llm_client.embed([query_text])
+            [query_vector] = await llm_client.embed_async([query_text])
         except LLMUnavailableError:
             logger.warning("Embedding unavailable — retrieval skipped for skills=%s", query_skills)
             return []

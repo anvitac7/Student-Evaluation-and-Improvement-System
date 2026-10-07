@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Award, Briefcase, ClipboardList, FileText, LayoutDashboard, User } from "lucide-react";
+import { Award, Briefcase, ClipboardList, FileText, LayoutDashboard, Lightbulb, User } from "lucide-react";
 import { Suspense, useEffect } from "react";
 
 import { DashboardShell, initialsFrom, type DashboardNavItem } from "@/components/shared/dashboard-shell";
@@ -14,6 +14,7 @@ const NAV_ITEMS: DashboardNavItem[] = [
   { href: "/dashboard/drives", label: "Drives", icon: Briefcase },
   { href: "/dashboard/applications", label: "Applications", icon: ClipboardList },
   { href: "/dashboard/assessments", label: "Assessments", icon: Award },
+  { href: "/dashboard/insights", label: "Insights", icon: Lightbulb },
   { href: "/dashboard/profile", label: "Profile", icon: User },
 ];
 

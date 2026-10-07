@@ -73,3 +73,41 @@ export interface KnowledgeStateResponse {
   confidence: number;
   attempts_count: number;
 }
+
+/** One skill's standing across the student's whole assessment history. */
+export interface SkillFocus {
+  skill: string;
+  mastery_pct: number;
+  wrong_count: number;
+  attempts_touched: number;
+  times_seen: number;
+  priority_score: number;
+  severity: "critical" | "weak" | "watch" | "ok";
+  trend: "improving" | "declining" | "steady" | "unknown";
+  last_missed_at: string | null;
+}
+
+/** One concrete revision item — a question the student actually got wrong. */
+export interface StudyGuideItem {
+  question_id: string;
+  skill: string;
+  difficulty: string;
+  question_type: string;
+  text: string;
+  your_answer: string | null;
+  correct_answer: string | null;
+  missed_count: number;
+}
+
+export interface StudentInsightsResponse {
+  total_attempts: number;
+  total_questions_answered: number;
+  overall_accuracy_pct: number;
+  average_mastery_pct: number | null;
+  focus_areas: SkillFocus[];
+  strengths: SkillFocus[];
+  study_guide: StudyGuideItem[];
+  /** Null when no LLM provider is configured — the rest of the payload is
+   *  fully usable without it. */
+  narrative: string | null;
+}

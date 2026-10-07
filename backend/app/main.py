@@ -24,6 +24,7 @@ from app.routers import (
     drives,
     gap_analysis,
     health,
+    insights,
     jd_explanation,
     matching,
     questions,
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(matching.router, prefix=f"{settings.API_V1_PREFIX}/matching", tags=["Matching"])
     app.include_router(applications.router, prefix=f"{settings.API_V1_PREFIX}/applications", tags=["Applications"])
     app.include_router(gap_analysis.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(insights.router, prefix=settings.API_V1_PREFIX)
     app.include_router(jd_explanation.router, prefix=settings.API_V1_PREFIX)
     # Phase 11+: anti-cheat additions to assessments, admin routers
 

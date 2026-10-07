@@ -101,11 +101,22 @@ class Settings(BaseSettings):
     LLM_REQUEST_TIMEOUT_SECONDS: int = 30
     LLM_MAX_RETRIES: int = 1
 
-    # --- Embeddings (separate small model — NOT Qwen/Nemotron) ----------
-    EMBEDDING_PROVIDER: str = "ollama"                  # local, cheap, fast
-    EMBEDDING_MODEL: str = "nomic-embed-text"           # or bge-small
+    # --- Embeddings (separate small model — NOT the chat model) ----------
+    # EMBEDDING_PROVIDER selects the request SHAPE, since the two families
+    # of embedding API disagree on payload and response format:
+    #   "ollama"      -> POST {base}/api/embed  {"model","input":[...]} -> {"embeddings":[[...]]}
+    #   "openai"      -> POST {base}/embeddings {"model","input":[...]} -> {"data":[{"embedding":[...]}]}
+    # The latter covers every OpenAI-compatible host, which today means
+    # Gemini (one key then covers BOTH chat and embeddings, no local Ollama
+    # install needed) and OpenRouter.
+    EMBEDDING_PROVIDER: str = "ollama"                  # "ollama" | "openai"
+    EMBEDDING_MODEL: str = "nomic-embed-text"           # or bge-small / gemini-embedding-001
     EMBEDDING_BASE_URL: str = "http://localhost:11434"
-    EMBEDDING_DIM: int = 768                            # nomic-embed-text=768, bge-small=384
+    EMBEDDING_API_KEY: str = ""                         # required when PROVIDER=openai
+    # Informational only — nothing currently validates against it (the RAG
+    # store reads whatever dimension the provider returns). Values:
+    #   nomic-embed-text=768, bge-small=384, gemini-embedding-001=3072
+    EMBEDDING_DIM: int = 768
 
     # --- Knowledge-chunk store (Phase C/D) -------------------------------
     KNOWLEDGE_STORE_BACKEND: str = "mongodb_cosine"     # simple: cosine sim in Python

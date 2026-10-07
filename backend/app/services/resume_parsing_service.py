@@ -10,6 +10,8 @@ extraction, section parsing, storage read) is untouched, per the
 """
 import logging
 
+import anyio
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.ml.parsing.parser import parse_resume
@@ -47,7 +49,12 @@ class ResumeParsingService:
         # back to `_regex_skills` automatically inside extract_skills_llm
         # if the LLM is unreachable, so there is no functionality
         # regression on LLM downtime.
-        skills, unmapped = extract_skills_llm(text, source_id=resume_id, source_type="resume")
+        # extract_skills_llm is a blocking LLM round-trip. Run it in a worker
+        # thread so resume parsing doesn't freeze the event loop (and with
+        # it every other in-flight request) for the length of the call.
+        skills, unmapped = await anyio.to_thread.run_sync(
+            lambda: extract_skills_llm(text, source_id=resume_id, source_type="resume")
+        )
         if not skills:
             # Belt-and-suspenders: if the LLM path returned nothing at all
             # (e.g. malformed-but-not-raising edge case), don't silently

@@ -35,6 +35,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+import anyio
 import httpx
 from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError
 
@@ -77,7 +78,44 @@ class LLMClient:
       1. generate_text()      — free-text narratives (gap analysis, JD explain)
       2. generate_json()      — structured JSON (skill extraction)
       3. embed()               — vector embeddings (RAG retrieval)
+
+    Each has an `*_async` counterpart. USE THE ASYNC ONES from any `async def`.
+
+    Why: all three are synchronous (the `openai` SDK and `httpx` blocking
+    calls), and every caller lives inside an `async def` request handler.
+    Calling one directly freezes the entire event loop for the full duration
+    of the network round-trip — measured at 35s on a real Gemini call,
+    during which a 50ms-interval heartbeat coroutine accumulated ZERO
+    ticks. Every other request in the process stalls behind it, and the
+    Next.js dev proxy reports the symptom as `[Error: socket hang up]
+    { code: 'ECONNRESET' }` rather than anything pointing at the real cause.
+
+    The `*_async` wrappers hand the blocking work to a worker thread via
+    `anyio.to_thread.run_sync`, so the loop stays free to serve other
+    requests while the LLM thinks. The blocking methods are kept because
+    they're still correct from a plain sync context (scripts, tests), but
+    nothing in an async path should call them directly.
     """
+
+    # ------------------------------------------------------------------
+    # async wrappers — the correct entry point from async code
+    # ------------------------------------------------------------------
+    async def generate_text_async(
+        self, system_prompt: str, user_prompt: str, *, thinking: bool = True
+    ) -> str:
+        return await anyio.to_thread.run_sync(
+            lambda: self.generate_text(system_prompt, user_prompt, thinking=thinking)
+        )
+
+    async def generate_json_async(
+        self, system_prompt: str, user_prompt: str, *, schema_hint: str
+    ) -> dict[str, Any]:
+        return await anyio.to_thread.run_sync(
+            lambda: self.generate_json(system_prompt, user_prompt, schema_hint=schema_hint)
+        )
+
+    async def embed_async(self, texts: list[str]) -> list[list[float]]:
+        return await anyio.to_thread.run_sync(lambda: self.embed(texts))
 
     # ------------------------------------------------------------------
     # 1. Free-text generation
@@ -144,17 +182,45 @@ class LLMClient:
             return []
 
         try:
-            resp = httpx.post(
-                f"{s.EMBEDDING_BASE_URL}/api/embed",
-                json={"model": s.EMBEDDING_MODEL, "input": texts},
-                timeout=s.LLM_REQUEST_TIMEOUT_SECONDS,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["embeddings"]
-        except (httpx.HTTPError, KeyError) as e:
+            if s.EMBEDDING_PROVIDER == "openai":
+                return self._embed_openai_compatible(texts)
+            return self._embed_ollama(texts)
+        except (httpx.HTTPError, KeyError, IndexError) as e:
             logger.warning("Embedding provider failed: %s", e)
             raise LLMUnavailableError(f"Embedding model unavailable: {e}")
+
+    def _embed_ollama(self, texts: list[str]) -> list[list[float]]:
+        """Ollama's native /api/embed shape — still the default, because it
+        is the only option that needs no API key and no network."""
+        s = get_settings()
+        resp = httpx.post(
+            f"{s.EMBEDDING_BASE_URL}/api/embed",
+            json={"model": s.EMBEDDING_MODEL, "input": texts},
+            timeout=s.LLM_REQUEST_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        return resp.json()["embeddings"]
+
+    def _embed_openai_compatible(self, texts: list[str]) -> list[list[float]]:
+        """Any OpenAI-compatible /embeddings endpoint. Gemini's compatibility
+        layer uses exactly this shape, so one key covers chat AND embeddings
+        and there is no need to install/run Ollama locally."""
+        s = get_settings()
+        headers = {"Content-Type": "application/json"}
+        if s.EMBEDDING_API_KEY:
+            headers["Authorization"] = f"Bearer {s.EMBEDDING_API_KEY}"
+
+        resp = httpx.post(
+            f"{s.EMBEDDING_BASE_URL.rstrip('/')}/embeddings",
+            json={"model": s.EMBEDDING_MODEL, "input": texts},
+            headers=headers,
+            timeout=s.LLM_REQUEST_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        # OpenAI shape: {"data": [{"embedding": [...]}, ...]}. Ordered by
+        # the "index" field rather than trusting response order.
+        rows = sorted(resp.json()["data"], key=lambda d: d.get("index", 0))
+        return [row["embedding"] for row in rows]
 
     # ------------------------------------------------------------------
     # internal

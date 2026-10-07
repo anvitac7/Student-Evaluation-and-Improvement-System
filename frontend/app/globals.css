@@ -3,21 +3,37 @@
 @tailwind utilities;
 
 /*
-  Design tokens — Phase 3 sets functional defaults only.
-  A deliberate visual identity pass happens in Phase 12+ once real
-  dashboard content exists to design around (see frontend-design skill).
-  Direction chosen now: deep indigo-navy (institutional trust) + a muted
-  emerald accent (growth/readiness), Space Grotesk display + Inter body —
-  deliberately avoiding the generic cream+terracotta AI-default palette.
+  Design tokens.
+
+  Palette direction: red + white. The neutral/ambient tokens (background,
+  foreground, card, muted, border, input) carry a red hue so the page reads
+  warm rather than the previous blue-grey. They are deliberately kept VERY
+  low-chroma — the tint should register as "warm white / warm charcoal",
+  not as pink. Cards are pure white against a faintly tinted page so they
+  still separate cleanly.
+
+  Component/semantic tokens (primary, secondary, accent, success, warning,
+  destructive, ring) are intentionally NOT red-shifted: they drive buttons,
+  badges and status colours, where a distinct hue per meaning matters more
+  than theme consistency. Green success / amber warning / red destructive
+  keep their conventional meanings.
 */
 @layer base {
   :root {
-    --background: 220 20% 98%;
-    --foreground: 224 30% 12%;
+    /* --- ambient (red-tinted) --- */
+    --background: 20 45% 98%;
+    --foreground: 355 22% 12%;
 
     --card: 0 0% 100%;
-    --card-foreground: 224 30% 12%;
+    --card-foreground: 355 22% 12%;
 
+    --muted: 18 28% 95%;
+    --muted-foreground: 355 12% 42%;
+
+    --border: 18 20% 88%;
+    --input: 18 20% 88%;
+
+    /* --- components / semantics (unchanged) --- */
     --primary: 226 45% 22%;
     --primary-foreground: 210 40% 98%;
 
@@ -36,11 +52,6 @@
     --destructive: 0 72% 45%;
     --destructive-foreground: 0 0% 100%;
 
-    --muted: 220 14% 94%;
-    --muted-foreground: 220 9% 42%;
-
-    --border: 220 13% 88%;
-    --input: 220 13% 88%;
     --ring: 226 45% 22%;
 
     --radius: 0.625rem;
@@ -50,12 +61,20 @@
   }
 
   .dark {
-    --background: 224 32% 8%;
-    --foreground: 210 30% 96%;
+    /* --- ambient (warm charcoal, faint red undertone) --- */
+    --background: 355 12% 7%;
+    --foreground: 20 18% 96%;
 
-    --card: 224 28% 11%;
-    --card-foreground: 210 30% 96%;
+    --card: 355 10% 10%;
+    --card-foreground: 20 18% 96%;
 
+    --muted: 355 8% 15%;
+    --muted-foreground: 20 8% 65%;
+
+    --border: 355 8% 20%;
+    --input: 355 8% 20%;
+
+    /* --- components / semantics (unchanged) --- */
     --primary: 210 60% 80%;
     --primary-foreground: 224 30% 12%;
 
@@ -74,11 +93,6 @@
     --destructive: 0 63% 55%;
     --destructive-foreground: 210 30% 96%;
 
-    --muted: 224 24% 16%;
-    --muted-foreground: 220 10% 65%;
-
-    --border: 224 20% 20%;
-    --input: 224 20% 20%;
     --ring: 210 60% 80%;
   }
 }

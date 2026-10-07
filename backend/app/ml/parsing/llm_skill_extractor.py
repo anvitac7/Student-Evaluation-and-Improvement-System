@@ -61,6 +61,11 @@ def extract_skills_llm(text: str, *, source_id: str, source_type: str) -> tuple[
     """
     Returns (canonical_skill_tags, unmapped_suggestions).
 
+    SYNCHRONOUS on purpose — this is a blocking LLM round-trip. Its only
+    caller (ResumeParsingService.parse_and_store) is async, so it must
+    invoke this via `anyio.to_thread.run_sync` rather than calling it
+    directly, or the event loop stalls for the full duration of the call.
+
     On LLM failure, transparently falls back to the regex extractor and
     returns an empty unmapped list (regex has no concept of "unmapped" —
     it silently can't see anything outside its pattern anyway, which is
