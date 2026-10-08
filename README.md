@@ -73,17 +73,17 @@ Accurate document extraction is critical, as a failed resume parse breaks the se
 
 ```mermaid
 flowchart LR
-    Doc[Upload PDF] --> PyMu[PyMuPDF (fitz)]
-    PyMu --> Check1{Is Text Usable?}
-    Check1 -- Yes --> Clean[Normalize Text]
-    Check1 -- No --> Plumber[pdfplumber]
+    Doc["Upload PDF"] --> PyMu["PyMuPDF (fitz)"]
+    PyMu --> Check1{"Is Text Usable?"}
+    Check1 -- Yes --> Clean["Normalize Text"]
+    Check1 -- No --> Plumber["pdfplumber"]
     
-    Plumber --> Check2{Is Text Usable?}
+    Plumber --> Check2{"Is Text Usable?"}
     Check2 -- Yes --> Clean
-    Check2 -- No --> OCR[PaddleOCR]
+    Check2 -- No --> OCR["PaddleOCR"]
     
     OCR --> Clean
-    Clean --> NER[spaCy NER / Regex]
+    Clean --> NER["spaCy NER / Regex"]
     NER --> DB[(Database)]
 ```
 
