@@ -634,6 +634,36 @@ class MarketAnalyticsService:
 
     # -- Public API ---------------------------------------------------------
 
+    async def build_posting_query(
+        self,
+        year_from: int | None,
+        year_to: int | None,
+        company: str | None,
+        job_family: str | None,
+        location: str | None,
+    ) -> dict[str, Any]:
+        """Validated Mongo posting query for the given POSTING filters.
+
+        Public facade for the Phase 8 skill-gap service, which must apply the
+        EXACT same posting-population filter semantics (and the same
+        unknown-company/location -> 400 validation) as the market dashboard
+        without duplicating the resolution logic. Skill-scope filters are not
+        part of the posting population — callers apply them via
+        ``_aggregate_postings``'s ``MarketQuery``.
+        """
+        self._validate_year_range_values(year_from, year_to)
+        mongo_query: dict[str, Any] = {}
+        year_filter = self._year_filter(year_from, year_to)
+        if year_filter:
+            mongo_query["year"] = year_filter
+        if job_family is not None:
+            mongo_query["job_family"] = job_family
+        if company is not None:
+            mongo_query["company_slug"] = await self._resolve_company(company)
+        if location is not None:
+            mongo_query["location"] = await self._resolve_location(location)
+        return mongo_query
+
     async def get_available_filters(self) -> MarketFiltersResponse:
         """Filter options derived live from the market dataset.
 

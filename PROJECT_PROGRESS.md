@@ -2457,3 +2457,156 @@ The drive card header also gained backend-computed overview counts:
   drive/student is enforced at creation, so this is defensive only).
 - The `next lint` deprecation warning (Next.js 16 migration notice) is
   pre-existing tooling noise, untouched.
+
+---
+
+## Phase 8 - TPO Skill Gap Analysis (2026-11-17)
+
+New TPO Analytics feature: which industry-demanded skills do our students
+lack? Industry demand comes from the existing Market Insights dataset; student
+skill evidence comes from two strictly separate sources (assessment-
+demonstrated vs self-reported), combined into a transparent, documented
+priority score. TPO-only, read-only, fully incremental over Phases 1-7.
+
+### Skill evidence sources (kept separate by design)
+
+- **Assessment-demonstrated** - recomputed from SUBMITTED attempts via the
+  only permitted chain: `Placement Drive.required_assessment_id ->
+  assessment attempts -> answers -> Question.skill_tags`. The
+  `knowledge_states` collection is deliberately NOT used as a source:
+  knowledge tracing is also updated by practice attempts, so mastery records
+  cannot tell drive evidence from practice evidence. Only assessments
+  referenced by a drive's `required_assessment_id` are ever queried, and an
+  attempt is kept only when its student applied to at least one drive linking
+  that assessment (closes the two-drives-share-one-assessment hole the same
+  way the per-drive analytics does). Practice attempts, standalone
+  (never-linked) assessments and in-progress attempts are structurally
+  excluded - in-progress attempts are never even fetched (status=submitted
+  filter). Descriptive (ungraded) answers contribute nothing.
+- **Self-reported** - student profile `skills` + ACTIVE resume
+  `skill_set`, normalized through the market skill catalog (names +
+  aliases) with a fallback through the existing resume-parsing normalizer
+  (`skill_normalizer`). A self-reported skill is NEVER counted as
+  demonstrated proficiency; the row shows both perspectives side by side.
+
+### Classification + aggregation (documented, mirrors knowledge tracing)
+
+- Per student per skill: accuracy = correct / graded answers across ALL
+  eligible submitted attempts combined (per attempt, deduped by attempt id;
+  retakes COMBINE - deliberately different from the ranking's best-attempt
+  rule, because skill evidence accumulates). At least 3 graded answers
+  (`MIN_GRADED_ANSWERS`) required to classify: demonstrated >= 75%
+  (knowledge-tracing STRONG_THRESHOLD), developing >= 50% (WEAK_THRESHOLD),
+  else not_demonstrated. Fewer graded answers = insufficient evidence -
+  never classified, never claimed as proficiency.
+- Student-facing classification (per skill): both / demonstrated /
+  developing / not_demonstrated / reported_only / insufficient_evidence /
+  no_evidence - the strongest available evidence; a reported student with
+  too few graded answers stays reported_only (never promoted to both).
+
+### Industry demand + priority
+
+- Demand reuses `MarketAnalyticsService` aggregation internals (same
+  projection, same posting-filter semantics via a new public
+  `build_posting_query` facade, same comparable-window growth math, same
+  MarketMeta/disclaimer). Filter options served by the SAME
+  `get_available_filters` logic. Skill-scope filters (category,
+  technical_only) apply through the shared `_aggregate_postings`.
+- Priority (transparent, NOT an industry standard; weights exposed in the
+  response meta): `0.5*demand_pct + 0.4*gap_pct + 0.1*growth_component`
+  where growth_component = (clamp(growth, -100, +100) + 100) / 2 when a
+  comparable window exists; otherwise the growth term is dropped and the
+  remaining weights re-normalized (never silently zeroed). high >= 60,
+  medium >= 40, else low.
+- Denominator: the `students` collection (whole college population,
+  displayed in the UI); students with no evidence are counted as
+  `no_evidence`, never treated as incapable and never excluded.
+
+### Files
+
+- Added `backend/app/services/skill_gap_service.py` - demand/evidence/
+  gap/priority pipeline (Router -> Service -> Repository; all aggregation
+  in-memory over bounded fetches: <=5000 students/drives/applications/
+  attempts/questions/postings, no N+1, one query per collection).
+- Extended `backend/app/models/analytics.py` with the Phase 8 response
+  models (SkillGapEntry, SkillGapSummary, SkillGapMeta, student models,
+  thresholds/weights).
+- Added a small public facade `build_posting_query` to
+  `backend/app/services/market_analytics_service.py` (pure additive; the
+  market dashboard's behavior and endpoints are untouched).
+- Added three TPO-only endpoints to `backend/app/routers/analytics.py`:
+  `GET /api/v1/analytics/tpo/skill-gaps` (posting filters + sort=
+  priority|demand|gap), `.../skill-gaps/filters` (same options as Market
+  Insights), `.../skill-gaps/{skill_id}/students` (page/limit/search/
+  classification filter; whole population listed by default - the
+  no-evidence students are the training audience - each classification
+  narrows it; unknown skill -> 404).
+- Added `backend/tests/test_skill_gap_analytics.py` - 22 tests
+  (RBAC on all 3 endpoints; demand counts recomputed from a controlled
+  mini-dataset; company-filter denominator change; invalid filters -> 400;
+  drive-attempt end-to-end scenario with 10 students covering demonstrated /
+  developing / not_demonstrated / insufficient / reported / both /
+  no_evidence; practice-exclusion proof incl. a perfect-score practice
+  attempt changing nothing; standalone-assessment exclusion; in-progress
+  attempt with correct answers contributing nothing; unmapped skill tags
+  reported in meta and never creating fake rows; shared-assessment never
+  double-counted; multi-assessment combination; retake combination (50%
+  developing, NOT best-attempt 100%); alias normalization via profile and
+  resume sources; self-reported never demonstrated; priority formula and
+  missing-growth re-weighting; summary cards; search/pagination/filter;
+  read-only guarantees on ALL operational + market collections; market
+  endpoints unaffected).
+- Frontend: added `types/skill-gaps.ts` (mirrors backend models),
+  `hooks/use-skill-gaps.ts` (query-keyed filters, keepPreviousData),
+  `components/skill-gaps/` (filter panel reusing the market filter
+  options, summary cards, demand-vs-proficiency Recharts bar chart with
+  top-12 preview + show-all, sortable priority table with row-click detail,
+  skill detail panel with evidence breakdown + company/family/year demand,
+  student list with search + classification filter + pagination, training
+  recommendations from the same priority score, unmapped-skill cards,
+  methodology notes card) and the page
+  `app/(tpo)/tpo/dashboard/analytics/skill-gaps/page.tsx`.
+- `app/(tpo)/layout.tsx`: added the Skill Gaps nav item.
+
+### Validation performed
+
+- Backend: 22 new tests; full suite **275 passed** (253 before + 22).
+- Frontend: `typecheck` + `lint` clean; `next build` succeeds
+  (skill-gaps page 11.6 kB / 277 kB first load).
+- Live verification (backend :8001, dev frontend :3000), READ-ONLY against
+  the real dataset: 52 skills analyzed from 300 mock postings + 52 catalog
+  skills; student population 9; RBAC live (401 anon / 403 student / 200
+  TPO); technical_only filter returns only technical rows; students
+  endpoint pagination + name search + unknown-skill 404 + unknown-company
+  400; priority sort verified descending; market metadata/disclaimer
+  embedded. Temporary TPO + student accounts deleted afterwards and ALL
+  collection counts verified unchanged (users 9, tpos 5, students 8,
+  drives 10, applications 2, attempts 4, questions 100, assessments 10,
+  resumes 4, postings 300, catalog 52, knowledge_states 25).
+- Frontend page serves 200 with the role cookie and 307-redirects anonymous
+  users to login (same middleware behavior as the other TPO pages); SSR
+  HTML conventions match the existing client-side shell pages.
+
+### Limitations
+
+- No desktop browser was connected (same as Phases 4-7), so chart
+  interactions, table sorting, the skill detail/student panels and
+  responsive layout need a manual visual pass.
+- Assessment skill evidence depends on `Question.skill_tags` being
+  curated; tags outside the market catalog cannot be compared to demand and
+  are surfaced in `unmapped_assessment_skill_tags` (max 25 listed) instead
+  of silently dropped. Self-reported skills unmatchable to the catalog or
+  demanded skills are listed as `unmapped_self_reported_skills`.
+- Practice assessments contribute no evidence by design - students who
+  practice a skill are not credited unless a drive assessment grades it.
+- The market dataset is mock data (`source="mock"`); the response embeds
+  the shared MarketMeta disclaimer and the priority weights are labelled
+  demo assumptions. Growth contributes to priority only when a comparable
+  window exists (the dataset's 2026 slice is Jan-Oct).
+- Assessment evidence spans ALL drives in the system (college-wide),
+  matching the global market view; there is no per-TPO ownership filter on
+  skill evidence (consistent with the dataset being market-wide, and
+  unlike the per-drive analytics where ownership matters).
+- Resume evidence uses only the ACTIVE resume's extracted `skill_set`
+  (already grounded in the canonical vocabulary by the Phase 6/7 parsing
+  pipeline); raw resume text is never re-parsed here and never exposed.

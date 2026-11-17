@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { BarChart3, Briefcase, LayoutDashboard, TrendingUp } from "lucide-react";
+import { BarChart3, Briefcase, LayoutDashboard, Target, TrendingUp } from "lucide-react";
 import { useEffect } from "react";
 
 import { DashboardShell, initialsFrom, type DashboardNavItem } from "@/components/shared/dashboard-shell";
@@ -14,6 +14,7 @@ const NAV_ITEMS: DashboardNavItem[] = [
   // highlight "Analytics".
   { href: "/tpo/dashboard/analytics", label: "Analytics", icon: BarChart3, exact: true },
   { href: "/tpo/dashboard/analytics/trending", label: "Market Insights", icon: TrendingUp },
+  { href: "/tpo/dashboard/analytics/skill-gaps", label: "Skill Gaps", icon: Target },
 ];
 
 /**
