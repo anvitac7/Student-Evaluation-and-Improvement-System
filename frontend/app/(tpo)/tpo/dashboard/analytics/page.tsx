@@ -2,7 +2,7 @@
 
 import { AlertCircle, BarChart3, Briefcase, Percent, Users } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
+import { DriveBreakdown } from "@/components/analytics/drive-breakdown";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -73,34 +73,7 @@ export default function TpoAnalyticsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Per-drive breakdown</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {data.drives.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No drives created yet.</p>
-          ) : (
-            data.drives.map((drive) => (
-              <div key={drive.drive_id} className="rounded-md border border-border p-4">
-                <div className="mb-2 flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">{drive.job_title}</p>
-                    <p className="text-sm text-muted-foreground">{drive.company_name}</p>
-                  </div>
-                  <Badge variant={drive.status === "open" ? "success" : "secondary"}>{drive.status}</Badge>
-                </div>
-                <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-                  <span>{drive.total_applications} applied</span>
-                  <span>{drive.breakdown.shortlisted} shortlisted</span>
-                  <span>{drive.breakdown.rejected} rejected</span>
-                  <span>{drive.breakdown.selected} selected</span>
-                </div>
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
+      <DriveBreakdown drives={data.drives} />
     </div>
   );
 }

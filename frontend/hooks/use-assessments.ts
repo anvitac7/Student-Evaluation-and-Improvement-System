@@ -4,6 +4,8 @@ import { apiClient } from "@/lib/api-client";
 import type {
   AssessmentResponse,
   AttemptResultResponse,
+  CodeRunSummary,
+  FinishAttemptResponse,
   KnowledgeStateResponse,
   StartAttemptResponse,
   StudentInsightsResponse,
@@ -73,9 +75,18 @@ export function useAttemptResults(attemptId: string | null) {
  */
 export function useStartAssessment() {
   return useMutation({
-    mutationFn: async ({ assessmentId, fingerprintHash }: { assessmentId: string; fingerprintHash?: string }) => {
+    mutationFn: async ({
+      assessmentId,
+      fingerprintHash,
+      applicationId,
+    }: {
+      assessmentId: string;
+      fingerprintHash?: string;
+      applicationId?: string;
+    }) => {
       const { data } = await apiClient.post<StartAttemptResponse>(`/assessments/${assessmentId}/start`, {
         fingerprint_hash: fingerprintHash ?? null,
+        application_id: applicationId ?? null,
       });
       return data;
     },
@@ -102,6 +113,19 @@ export function useSubmitAnswer() {
   });
 }
 
+/** Finalize an in-progress attempt early, using the answers submitted so far. */
+export function useFinishAssessment() {
+  return useMutation({
+    mutationFn: async (payload: { attemptId: string; sessionToken: string }) => {
+      const { data } = await apiClient.post<FinishAttemptResponse>(
+        `/assessments/attempts/${payload.attemptId}/finish`,
+        { session_token: payload.sessionToken }
+      );
+      return data;
+    },
+  });
+}
+
 export function useReportViolation() {
   return useMutation({
     mutationFn: async (payload: {
@@ -119,6 +143,28 @@ export function useReportViolation() {
         }
       );
       return data;
+    },
+  });
+}
+
+/** Run the current coding question against its visible sample test cases. */
+export function useRunCode() {
+  return useMutation({
+    mutationFn: async (payload: {
+      attemptId: string;
+      sessionToken: string;
+      questionId: string;
+      code: string;
+    }) => {
+      const { data } = await apiClient.post<{ code_result: CodeRunSummary }>(
+        `/assessments/attempts/${payload.attemptId}/run-code`,
+        {
+          session_token: payload.sessionToken,
+          question_id: payload.questionId,
+          code: payload.code,
+        }
+      );
+      return data.code_result;
     },
   });
 }

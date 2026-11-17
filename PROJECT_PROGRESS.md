@@ -1190,3 +1190,1270 @@ zip; only relevant if re-cloning from git later (they're `.gitignore`'d).
 - **No batch/background precomputation of embeddings** — the first match request for any given resume or drive pays the bi-encoder cost synchronously (a few hundred ms to a couple seconds on CPU, depending on host). Every subsequent request for that same resume/drive is fast (cached). Acceptable for this project's scale; a background job to precompute embeddings on upload/creation would be the next step if first-request latency ever becomes a real complaint.
 - **`retriever_pool` isn't currently exposed as a query parameter** on any endpoint — it's a fixed default. Reasonable for now since the real corpus never approaches that ceiling; would be simple to expose if a use case for tuning it shows up.
 
+---
+
+## Feature addendum — Practice vs. drive assessments + TPO rankings ✅
+
+Adds the two-tier assessment model requested after Phase 15: **practice**
+assessments for a student's own growth, and **drive** assessments opened by a
+company's requirements. Drive assessment scores feed a per-drive ranking on
+the TPO analytics page; practice attempts are deliberately excluded.
+
+### Files created / changed
+```
+backend/
+├── app/models/assessment.py        # + AssessmentType (practice|drive); type on
+│                                    #   AssessmentInDB / CreateRequest / Response;
+│                                    #   drive_id on AssessmentResponse
+├── app/models/analytics.py         # + DriveAssessmentRanking(Entry)
+├── app/services/assessment_service.py  # drive assessments (drive_id set) require an
+│                                        #   application; practice ignores application_id
+├── app/services/drive_service.py   # linking an assessment to a drive also marks it
+│                                    #   type="drive"
+├── app/services/analytics_service.py   # + drive_assessment_rankings (best submitted
+│                                        #   score per student, only drive-linked assessments)
+├── app/routers/assessments.py      # type filter on GET /assessments; type in payloads
+└── tests/test_drive_assessment_ranking.py  # NEW — 3 tests
+
+frontend/
+├── types/assessment.ts             # + AssessmentType, AssessmentResponse.type/drive_id
+├── types/analytics.ts              # + drive_assessment_rankings
+├── hooks/use-assessments.ts        # useStartAssessment accepts applicationId
+├── app/(student)/dashboard/assessments/page.tsx  # Practice / Drive tabs
+├── app/(admin)/admin/dashboard/assessments/{page,new/page}.tsx  # type badge + selector
+└── app/(tpo)/tpo/dashboard/analytics/page.tsx    # drive assessment rankings card
+```
+
+### Key decisions
+- **Drive-ness is determined by drive linkage (`assessment.drive_id`), not only by
+  the `type` label.** The TPO linking an assessment to a drive flips `type` to
+  `drive`; older records that predate the field also rank correctly because the
+  ranking is built from `drive.required_assessment_id`. This keeps the backward
+  compatibility the existing e2e test relies on.
+- **A drive assessment cannot be started without an application.** The application
+  is what ties the attempt to a drive, so a drive assessment started with no
+  application returns a clear `400` rather than silently producing an unrankable
+  attempt. Practice assessments start freely.
+- **Rankings use each student's best submitted attempt per drive.** A retake
+  improves a student's standing rather than creating duplicate rows. Only
+  assessments with a submitted attempt produce a ranking group.
+
+### Test instructions
+```bash
+cd backend
+.venv\Scripts\python.exe -m pytest -q      # Expected: 184 passed (181 + 3 new)
+cd ../frontend
+npm run typecheck && npm run lint
+```
+
+### Verification checklist
+- [x] Students see separate Practice and Drive tabs on the assessments page
+- [x] Only drive assessments for drives the student actually applied to appear
+- [x] Starting a drive assessment without an application is rejected (`400`)
+- [x] Practice assessments start without an application
+- [x] TPO analytics shows a per-drive ranking of students by best drive assessment score
+- [x] Practice-only attempts never appear in drive assessment rankings
+
+---
+
+## Feature addendum — Coding questions executed against test cases ✅
+
+Adds real coding questions to the assessment engine. Previously `coding` was a
+label whose answer was exact-matched against a string; now an admin attaches
+stdin/stdout test cases (visible and hidden) and the student's program is
+actually executed against them. A question is correct only when **every** test
+case passes. Practice and drive assessments both support coding questions; the
+existing drive-ranking logic is unchanged because it scores attempts, not
+question types.
+
+### Files created / changed
+```
+backend/
+├── app/models/assessment.py        # + CodingLanguage, TestCase; language/starter_code/
+│                                    #   test_cases on QuestionInDB + admin payloads;
+│                                    #   visible_test_cases on QuestionStudentView;
+│                                    #   CodeRunSummary/CodeTestCaseResult;
+│                                    #   code_result in answers/results
+├── app/services/code_execution_service.py  # NEW — subprocess runner (Python + Node),
+│                                            #   timeouts, minimal env, hidden-case redaction
+├── app/services/assessment_service.py       # coding answers run test cases; run-code sample
+├── app/services/question_service.py        # validate/persist language + test cases
+├── app/routers/assessments.py              # code_result in submit/result payloads;
+│                                            #   POST /attempts/{id}/run-code
+├── app/routers/questions.py                # expose coding fields to admin
+├── app/core/config.py                      # CODE_EXECUTION_* settings
+└── tests/test_coding_questions.py          # NEW — 7 tests (validation, visibility,
+                                             #   pass/fail, hidden redaction, sample run,
+                                             #   timeout, JavaScript)
+
+frontend/
+├── types/assessment.ts             # + CodingLanguage, test-case/code-run types
+├── types/question.ts               # + coding fields on admin payloads
+├── hooks/use-assessments.ts        # + useRunCode
+├── components/shared/question-form.tsx     # language selector, starter code, test-case editor
+├── app/(admin)/admin/dashboard/questions/page.tsx  # language + test-count badges
+├── app/(student)/dashboard/assessments/[attemptId]/take/page.tsx  # code editor,
+│                                            #   sample cases, "Run sample tests"
+└── app/(student)/dashboard/assessments/results/[attemptId]/page.tsx
+                                             # per-question breakdown + test results
+```
+
+### Key decisions
+- **Test cases are stdin/stdout.** The student's program reads `stdin` and its
+  `stdout` is compared to `expected_output`. This is language-agnostic, works
+  for full programs and for "fill in the function body" questions via
+  `starter_code`, and avoids inventing a per-language function-call harness.
+- **Comparison is normalised.** Line endings are unified, trailing spaces on
+  each line are ignored, and trailing blank lines are dropped — the usual judge
+  convention. Everything else is exact.
+- **All test cases must pass** for the question to be marked correct (full marks
+  or zero), matching how placement coding rounds usually grade. The result
+  payload still reports the pass count per case.
+- **Hidden test cases never leak.** The student view only receives non-hidden
+  cases. On submission, hidden cases report pass/fail only — input, expected
+  output, actual output and stderr are all redacted, including on the results
+  endpoint.
+- **"Run sample tests" runs only visible cases.** It is a pre-submit
+  convenience and cannot be used to probe hidden expectations.
+- **Legacy coding questions still work.** A coding question with no test cases
+  falls back to a single empty-input case compared against `correct_answer`, so
+  records created before this feature remain gradable.
+- **Only Python and JavaScript are offered.** Both runtimes are present in this
+  project's environment (backend venv + Node for the frontend). Adding a
+  compiled language later means extending the command registry in
+  `code_execution_service`, not changing the data model.
+
+### Security caveat (important)
+`code_execution_service` is a **best-effort local runner, not a sandbox**. It
+uses a temp cwd, a minimal environment (no app secrets), an isolated Python
+(`-I`), code/output size limits, per-case and overall timeouts, and a language
+allowlist — but student code still runs as the backend process user and can
+reach the filesystem/network via `os`/`fs`. For a real deployment, run
+submissions in a disposable container or a dedicated judge service (Judge0, a
+Kubernetes job with no network and a read-only filesystem, etc.). Set
+`CODE_EXECUTION_ENABLED=false` to disable coding execution entirely; the answer
+endpoint then returns a clear `503` instead of running code.
+
+### Test instructions
+```bash
+cd backend
+.venv\Scripts\python.exe -m pytest -q      # Expected: 192 passed (184 + 8 new)
+cd ../frontend
+npm run typecheck && npm run lint
+```
+
+### Verification checklist
+- [x] Admins can create coding questions with a language, starter code and one
+      or more test cases
+- [x] Students see only visible sample cases and never the hidden ones
+- [x] Students can run visible sample cases before submitting
+- [x] Submitting executes the program against all cases; all-pass = full marks
+- [x] Wrong answers, runtime errors and timeouts are reported per case without
+      hanging the request
+- [x] Hidden case inputs/outputs are redacted in both the submit and results
+      payloads
+- [x] Legacy coding questions (correct_answer only) still grade
+- [x] Python and JavaScript submissions both work
+
+### Follow-up fix — assessments with no medium-difficulty questions
+
+The adaptive engine used to hard-require a medium-difficulty question in the
+selected categories when starting an attempt. A practice assessment pointing at
+a category that only contained an easy coding question (the common case for a
+one-problem category) therefore failed with `422 No questions available for this
+assessment yet.` Start-up now falls back to Easy and then Hard when Medium is
+unavailable, and stores the actual starting difficulty so the adaptive
+next-question logic begins from the right level. Medium remains the preferred
+start whenever it exists. Covered by
+`test_assessment_starts_when_only_easy_coding_question_exists`.
+
+### Seed scripts for a fresh database
+
+Three idempotent seeders live in `backend/scripts/` for rebuilding demo data after
+a database reset:
+
+- `seed_mock_drives.py` - creates 10 mock companies and 10 placement drives
+  (9 open + 1 closed), split 5/5 between the two TPO accounts. Refuses to run
+  when drives already exist unless `--force` is passed.
+- `seed_question_bank.py` - creates 12 question categories and 100 questions
+  (76 MCQ, 12 coding, 12 descriptive; 36 easy / 47 medium / 17 hard). Coding
+  questions carry three stdin/stdout test cases each, and their reference
+  solutions are executed against those cases before insertion. Refuses to run
+  when questions already exist unless `--force` is passed; `--reset` replaces
+  the bank when no assessments or attempts exist.
+- `seed_assessments.py` - creates 5 practice assessments and 5 drive
+  assessments. The drive assessments are linked to the Nexora, CloudNest,
+  Skyline, BlueOrbit, and PixelForge drives with minimum-score thresholds and
+  assessment deadlines. Refuses to run when assessments already exist unless
+  `--force` is passed; `--reset` replaces them when no attempts exist.
+- `seed_job_market.py` - creates the separate historical job-market dataset
+  described below. It is deterministic, validates every invariant before
+  writing, and never touches operational placement collections.
+
+Run from `backend/`:
+
+```bash
+.venv\Scripts\python.exe -m scripts.seed_mock_drives
+.venv\Scripts\python.exe -m scripts.seed_question_bank
+.venv\Scripts\python.exe -m scripts.seed_assessments
+.venv\Scripts\python.exe -m scripts.seed_job_market
+```
+
+The operational seeders use the service layer (`DriveService` /
+`QuestionService`) so validation and derived fields match the normal admin flow.
+The market seeder uses its repository layer and validates the complete dataset
+before inserting anything.
+
+### Fix - assessment-taking flow
+
+The take-assessment page used to render inside the student dashboard shell, so
+clicking Insights/Resume/Drives/etc. navigated away and left the attempt
+`in_progress` forever. MCQ questions also had no submit button, so the only way
+forward was to abandon the attempt. The page now runs as a focused exam surface
+with the dashboard chrome hidden, a browser Back guard, and a `beforeunload`
+warning. `POST /assessments/attempts/{attempt_id}/finish` submits an attempt
+early with the answers so far, and the client timer calls the same endpoint when
+time expires.
+
+Starting an assessment now resumes an existing in-progress attempt (including a
+drive attempt linked through the application) instead of creating a duplicate,
+and `StartAttemptResponse.time_remaining_sec` keeps the local timer accurate on
+resume. Covered by `test_finish_attempt_submits_with_answers_so_far`,
+`test_start_resumes_an_in_progress_attempt`, and
+`test_drive_start_resumes_an_in_progress_attempt`.
+
+## Trending Skills & Company Requirements - Phase 2 market dataset
+
+Phase 2 adds the historical data layer for the TPO market-insights feature. It
+does not add API endpoints or frontend charts yet; those are Phase 3 work.
+
+### Why a separate collection
+
+`placement_drives` is operational data: live drives, deadlines, applications,
+eligibility and assessment linkage. It is current-year data and must not be
+rewritten to create a historical market view. The market dataset therefore uses
+two new collections:
+
+- `job_market_postings` - 300 historical mock postings from 2023 through
+  October 2026.
+- `market_skill_catalog` - the canonical skill vocabulary used by those
+  postings (40 technical + 12 soft skills).
+
+Every mock posting has `source="mock"` and a `dataset_version` (`2026.11`).
+Company websites use reserved `.example` domains, and every generated JD states
+that it is fictional demo data. Future real postings can be added with a
+different `source` without changing the frontend contract.
+
+### Generated shape
+
+| Year | Postings |
+|---|---:|
+| 2023 | 64 |
+| 2024 | 72 |
+| 2025 | 84 |
+| 2026 (Jan-Oct) | 80 |
+| **Total** | **300** |
+
+- 15 fictional companies, each with at least one posting in every year.
+- 10 job families, each present in all four years.
+- 40 technical skills and 12 soft skills.
+- 20 role templates across software, frontend, backend, data, AI/ML, cloud,
+  cybersecurity, QA, business analysis, and embedded/robotics.
+- Posting dates, quarters and months are derived from the same `posted_at`
+  value; no posting is dated after 31 October 2026.
+- `required_skills` is exactly `technical_skills + soft_skills`, with no
+  duplicate skill inside a posting.
+
+The family mix is balanced per year, so year-over-year changes come from the
+year-wise `SKILL_TRENDS` weights rather than from a random shift toward one job
+family. The weights are illustrative demo assumptions, not verified industry
+research. Legacy skills (jQuery, AngularJS, SOAP, XML, Manual Testing, Hadoop)
+decline; Python, TypeScript, React.js, Next.js, FastAPI, AWS, Docker,
+Kubernetes, Terraform, PyTorch, Generative AI, NLP, Pandas, Snowflake, dbt,
+Power BI and CI/CD rise.
+
+### Partial-year comparison
+
+The 2026 data stops at 31 October. Future comparisons must use January-October
+for both 2025 and 2026. The constants are exposed from
+`backend/app/models/market.py`:
+
+```python
+MARKET_LATEST_YEAR = 2026
+MARKET_COMPARISON_PERIOD = "Jan-Oct"
+MARKET_IS_PARTIAL_YEAR = True
+```
+
+`YEAR_PROFILES[2026]` also carries `is_partial_year` and `comparison_period`.
+The seed validation report prints the same information.
+
+### Seed commands and flags
+
+From `backend/`:
+
+```bash
+# First run (refuses if mock postings already exist)
+.venv\Scripts\python.exe -m scripts.seed_job_market
+
+# Regenerate mock postings and refresh mock catalog entries
+.venv\Scripts\python.exe -m scripts.seed_job_market --force
+
+# Delete mock postings + mock catalog entries, then recreate both
+.venv\Scripts\python.exe -m scripts.seed_job_market --reset
+```
+
+Safety behavior:
+
+- Default mode refuses to append when `source="mock"` postings already exist.
+- `--force` and `--reset` only delete documents whose `source` is `"mock"`.
+- Non-mock postings and non-mock catalog entries are never deleted or
+  overwritten.
+- `placement_drives`, `applications`, `assessments`, `questions`,
+  `companies`, `students`, `tpos`, and all other operational collections are
+  untouched.
+- The seeder validates the whole generated dataset before opening a write
+  connection. A failed invariant aborts the run.
+
+### Validation performed
+
+Before insertion, `validate_dataset()` checks:
+
+- external IDs are unique and start with `mock-`;
+- every technical/soft skill exists in `market_skill_catalog`;
+- `required_skills` is the exact union of technical + soft skills;
+- no skill is duplicated within a posting;
+- every company has at least one posting in every year;
+- yearly totals are exactly 64 / 72 / 84 / 80;
+- every job family appears in multiple years;
+- no 2026 posting is dated after 31 October 2026;
+- every company website uses `.example`;
+- `year`, `quarter` and `month` match `posted_at`;
+- salary ranges and CGPA values are valid;
+- every catalog skill is used at least once.
+
+### Files
+
+- Added `backend/app/models/market.py` - Pydantic models, enums, dataset
+  constants and posting invariants.
+- Added `backend/app/repositories/job_posting_repository.py` -
+  `JobMarketPostingRepository` and `MarketSkillCatalogRepository`, including
+  validated bulk inserts.
+- Added `backend/scripts/seed_job_market.py` - centralized `SKILL_CATALOG`,
+  `COMPANIES`, `ROLE_TEMPLATES`, `YEAR_PROFILES`, `SKILL_TRENDS`, soft-skill
+  pool, deterministic generator, validation report and CLI.
+- Updated `backend/app/core/database.py` - market collection indexes
+  (`ensure_market_indexes`) called from startup `ensure_indexes()`.
+- Added `backend/tests/test_market_dataset.py` - 11 regression tests covering
+  distribution, coverage, skill invariants, determinism, model rejection,
+  repository round-trip and indexes.
+- Updated `PROJECT_PROGRESS.md` - this section.
+
+### Verification
+
+- Backend suite: `207 passed`.
+- Live MongoDB seed verified: 300 postings, 52 catalog skills, 15 companies in
+  every year, 10 job families in all four years, and 2026 maximum posting date
+  of 25 October 2026.
+- Mock posting indexes are present on `external_id` (unique), `posted_at`,
+  `year`, `company_slug`, `job_family`, `location`, `required_skills`,
+  `technical_skills`, `soft_skills` and `source`.
+- Catalog indexes are present on `slug` (unique) and `category`.
+- Operational counts before and after seeding were unchanged: 10 companies,
+  10 placement drives, 2 applications, 10 assessments, 100 questions,
+  12 question categories and 4 assessment attempts.
+
+## Trending Skills & Company Requirements - Phase 3 market analytics APIs
+
+Phase 3 adds the TPO-only backend APIs on top of the Phase 2 dataset. No
+frontend components were added; Phase 4 consumes this API.
+
+### Architecture
+
+Router → Service → Repository, matching the rest of the project:
+
+- `backend/app/routers/market_analytics.py` - endpoint definitions, query
+  parameter validation and error mapping.
+- `backend/app/services/market_analytics_service.py` - all aggregation and
+  trend math (single source of truth for every response section).
+- `backend/app/repositories/job_posting_repository.py` - extended with
+  `find_projected()` (aggregate-level projection, no Pydantic validation cost,
+  never reads descriptions/JD text) and `distinct_values()`.
+- `backend/app/models/market.py` - appended the Pydantic v2 response models
+  (`MarketAnalyticsResponse`, `MarketFiltersResponse`, skill/company/family
+  models, period metadata) so the response contract is stable for the
+  Phase 4 TypeScript frontend.
+
+The service reads ONLY `job_market_postings` + `market_skill_catalog` — never
+`placement_drives` or any other operational collection. It reuses the existing
+`get_database` dependency, `require_role` authorization, logging and HTTP
+error conventions. No caching layer was added (none exists in the project).
+
+### Endpoints
+
+Both endpoints are registered under the existing `/api/v1` prefix in
+`backend/app/main.py` and use `Depends(require_role("tpo"))`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/analytics/tpo/market` | Full market analytics dashboard payload |
+| GET | `/api/v1/analytics/tpo/market/filters` | Filter options derived live from the dataset |
+
+Authorization behavior (verified live and by tests):
+
+- TPO → 200.
+- Student → 403.
+- Admin → 403.
+- Unauthenticated → 401 (existing `get_current_user` behavior).
+- No TPO-ownership filtering: the market dataset is global market data.
+
+### Query parameters (main endpoint)
+
+| Parameter | Type | Default | Validation |
+|---|---|---|---|
+| `year_from` / `year_to` | int | none | 2000-2100; `year_from > year_to` → 400 |
+| `company` | string | none | company slug or exact name; unknown → 400 with pointer to `/filters` |
+| `job_family` | enum | none | invalid value → 422 (FastAPI enum validation) |
+| `location` | string | none | must exist in the dataset; unknown → 400 |
+| `skill_category` | enum | none | invalid value → 422 |
+| `technical_only` | bool | `false` | combined with `skill_category` by intersection |
+| `sort` | `trending` / `demand` | `trending` | invalid value → 422 |
+| `limit` | int | 10 | 1-20; outside → 422 |
+
+Filter semantics:
+
+- `year_from`, `year_to`, `company`, `job_family`, `location` filter the
+  POSTING population — the shared demand-percentage denominator.
+- `skill_category` and `technical_only` narrow which SKILLS are analysed;
+  they never change the posting denominator.
+- Every filter is applied identically across the summary, trending,
+  historical, emerging, company and job-family sections.
+
+### Response structure (stable contract for Phase 4)
+
+```jsonc
+{
+  "meta": {
+    "source": "mock",
+    "dataset_version": "2026.11",
+    "is_mock_data": true,
+    "comparison_period": "Jan-Oct",
+    "is_partial_year": true,
+    "disclaimer": "Demo dataset: ... not verified real-world hiring statistics.",
+    "current_period":  { "year": 2026, "start_month": 1, "end_month": 10, "label": "Jan-Oct 2026" },
+    "previous_period": { "year": 2025, "start_month": 1, "end_month": 10, "label": "Jan-Oct 2025" },
+    "comparison_comparable": true,
+    "filtered_years": [2023, 2024, 2025, 2026]
+  },
+  "summary": {
+    "total_postings": 300, "company_count": 15, "distinct_skill_count": 52,
+    "most_demanded_skill": { "name": "Python", "slug": "python", "category": "...", "posting_count": 250, "demand_pct": 83.3 },
+    "yoy_posting_growth_pct": 12.7
+  },
+  "trending_skills": [ /* up to `limit` (max 20) TrendingSkill objects */ ],
+  "historical_trends": [ /* every in-scope skill with a per-year series */ ],
+  "emerging_skills": [ /* zero previous-window demand, current demand > 0 */ ],
+  "companies": [ /* CompanyMarketAnalytics objects */ ],
+  "job_families": [ /* JobFamilyMarketAnalytics objects */ ]
+}
+```
+
+Example requests:
+
+```
+GET /api/v1/analytics/tpo/market
+GET /api/v1/analytics/tpo/market?company=vertex-robotics&year_from=2025&year_to=2026
+GET /api/v1/analytics/tpo/market?skill_category=Soft%20Skill&sort=demand&limit=20
+GET /api/v1/analytics/tpo/market?job_family=Data%20%26%20Analytics&technical_only=true
+```
+
+Section details:
+
+- `trending_skills` - name, slug, category, is_technical, posting_count,
+  demand_pct, trend_score, trend (`rising`/`declining`/`stable`/`emerging`,
+  or `null` when no comparable previous period exists), yoy_growth_pct,
+  current/previous period counts, and year-wise counts + demand percentages
+  for every filtered year. Sorted by `sort`, capped by `limit`.
+- `historical_trends` - the complete per-year series (count, demand_pct and
+  window-comparable yoy_growth_pct) for EVERY in-scope skill, not just the
+  top N, so charts are not bounded by the trending limit.
+- `emerging_skills` - skills with zero demand in the previous comparable
+  window and positive demand in the current window.
+- `companies` - posting count, share of filtered postings, top 10 skills
+  (counts + percentages within that company) and year-wise counts.
+- `job_families` - the same shape keyed by job family.
+- Company/family skill demand percentages use that entity's postings as the
+  denominator; everything else uses the filtered population.
+
+### Trend calculation formulas (implemented once, in the service)
+
+- **Demand percentage**: `demand_pct = (distinct postings requiring the skill
+  / total filtered postings) × 100`. A posting is never counted twice for the
+  same skill (Phase 2 data guarantees duplicate-free per-posting skill lists).
+- **YoY growth**: `growth = (current − previous) / previous × 100`. When the
+  latest filtered year is the partial year (2026), both windows are
+  January-October (never full-2026 vs full-2025); any other latest year
+  compares full calendar years. A zero previous count yields `null` (the
+  emerging classification) — never a division by zero.
+- **Trend score**: weighted mean of year-wise DEMAND SHARES (percentages, not
+  raw counts): `score = Σ w(year) × demand_pct(skill, year)` with calendar
+  weights 2026: 0.40, 2025: 0.30, 2024: 0.20, 2023: 0.10, normalised over the
+  years present in the filtered population (uniform fallback if every present
+  year is older than the 4-year window).
+- **Classification**: previous = 0 and current > 0 → `emerging`; growth ≥ +10%
+  → `rising`; growth ≤ −10% → `declining`; otherwise → `stable`. When no
+  comparable previous period exists (the previous window has no postings after
+  filtering, e.g. excluded by `year_from` or another filter) the classification
+  and growth are `null` — a skill is never labelled "emerging" merely because
+  a filter excluded the period it used to appear in.
+- **Partial-year handling**: `meta.comparison_period`, `meta.is_partial_year`,
+  `meta.current_period`, `meta.previous_period` and
+  `meta.comparison_comparable` expose exactly which windows were compared;
+  displayed yearly counts remain calendar-year totals (2026 is inherently
+  Jan-Oct) while all growth numbers use the comparable windows.
+
+### Performance
+
+- One projected `find` per request (12 aggregate fields, no descriptions or
+  JD text), bounded at 5,000 postings (the Phase 1 recommendation), plus one
+  small catalog read — then a single in-memory aggregation pass.
+- Unknown company/location values are validated against dataset distinct
+  values (2 light queries) and rejected with 400.
+- Empty datasets and filter mismatches return a valid, fully-shaped empty
+  response with HTTP 200 (never an error).
+- Only aggregates are returned; raw postings and job descriptions never
+  reach the API.
+
+### Tests
+
+Added `backend/tests/test_market_analytics.py` (22 tests). Every aggregate
+assertion is recomputed independently from the generated dataset, pinning the
+formulas rather than hardcoded numbers:
+
+- Authorization: TPO 200, student 403, admin 403, unauthenticated 401 (both
+  endpoints).
+- Summary totals, company count, distinct skill counts, most-demanded skill
+  and overall YoY growth match recomputation.
+- Skill counts use distinct postings; demand percentages use the shared
+  filtered-postings denominator; company/family percentages use the
+  entity's own denominator.
+- Year-wise and historical aggregation match recomputation for all 52 skills.
+- Company and job-family analytics match recomputation.
+- Filters (company, job family, location, skill category, technical_only,
+  year ranges) apply consistently across every section.
+- Sorting works for `trending` (trend score) and `demand` (posting count).
+- Limit: default 10, cap 20, 422 outside 1-20.
+- Invalid values: enum/sort/limit → 422; unknown company/location and
+  inverted year range → 400.
+- Trend logic: rising/declining/stable/emerging boundaries, zero previous
+  counts (no ZeroDivisionError), Jan-Oct 2026 vs Jan-Oct 2025 windows, and
+  the "filter-excluded period is not emerging" rule (synthetic mini dataset).
+- Empty collection and filter mismatch return valid empty responses.
+- Market analytics never read or modify `placement_drives`; mock source,
+  dataset version and disclaimer metadata are preserved.
+- Filters endpoint options match the dataset exactly (nothing hardcoded).
+
+### Verification
+
+- Backend suite: `229 passed, 1 warning` (207 previous + 22 new; the warning
+  is the pre-existing unrelated scikit-learn pickle-version warning).
+- Live HTTP verification against the seeded MongoDB dataset (temporary TPO
+  and student accounts, deleted afterwards; operational counts unchanged):
+  - Unauthenticated → 401 on both endpoints.
+  - TPO → 200 on both endpoints; student → 403.
+  - `?sort=demand&limit=3` returned `total_postings: 300`,
+    `company_count: 15`, `distinct_skill_count: 52`,
+    `most_demanded_skill: Python (83.3%)`, `yoy_posting_growth_pct: 12.7`,
+    top 3 = Python 250, Git 200, Docker 178, with
+    `source: mock`, `dataset_version: 2026.11`, `is_mock_data: true`,
+    `current_period: Jan-Oct 2026` vs `previous_period: Jan-Oct 2025`.
+  - Unknown company filter → 400.
+  - OpenAPI documents both paths under `/api/v1/analytics`.
+
+### Known limitations
+
+- The response aggregates the filtered postings in memory; datasets beyond
+  the 5,000-posting bound would be truncated silently (the Phase 2 mock
+  dataset is 300 postings; a real source at scale should move to MongoDB
+  aggregation pipelines).
+- `historical_trends` returns every in-scope skill (52 for the full dataset);
+  the frontend is expected to intersect it with the trending list it displays.
+- Company/family `top_skills` are capped at 10 entries each to keep response
+  sizes bounded.
+- The trend weights are illustrative demo assumptions, consistent with the
+  Phase 2 dataset; they are not verified industry research.
+
+## Trending Skills & Company Requirements - Phase 4 TPO dashboard
+
+Phase 4 adds the frontend: a TPO-only Market Insights dashboard consuming the
+Phase 3 APIs. No backend files were modified; no new chart/UI/state libraries
+were introduced (Recharts, TanStack React Query v5, shadcn-style UI components
+and the shared Axios client are used as-is).
+
+### Route and navigation
+
+- Page: `frontend/app/(tpo)/tpo/dashboard/analytics/trending/page.tsx`
+  (`/tpo/dashboard/analytics/trending`).
+- `frontend/app/(tpo)/layout.tsx` gained a **Market Insights** nav item
+  (TrendingUp icon) under the TPO Analytics section, and the existing
+  **Analytics** item was switched to exact matching so it no longer lights up
+  on the trending sub-route (and vice versa).
+- Visibility is TPO-only by construction: the nav lives in the TPO layout,
+  which renders only for `role === "tpo"` (client guard), and `middleware.ts`
+  redirects student/admin/unauthenticated requests off `/tpo/*` before render.
+  Backend `require_role("tpo")` remains the security source of truth.
+- Student/Admin dashboards were not modified.
+
+### New files
+
+- `frontend/types/market-analytics.ts` — TypeScript interfaces mirroring the
+  Phase 3 Pydantic response models exactly (field names, nullability,
+  trend-classification union, `Record<string, number>` for the backend's
+  `dict[int, …]` yearly maps, which serialise with JSON string keys), plus
+  `MarketAnalyticsParams` for the query contract.
+- `frontend/hooks/use-market-analytics.ts` — TanStack React Query v5 hooks:
+  - `useMarketAnalytics(filters)` — `GET /analytics/tpo/market` with the
+    active filters in the query key (`["market", "analytics", params]`),
+    `placeholderData: keepPreviousData` so previous results stay visible while
+    filters change (with an "Updating…" status line), 1-hour staleTime.
+  - `useMarketFilters()` — `GET /analytics/tpo/market/filters`, 1-hour
+    staleTime.
+  - The hook only builds/serialises query params (nulls and empty strings
+    omitted) and fetches; no analytics math lives in the frontend. Requests
+    go through the existing `apiClient` (auth header + refresh interceptor,
+    same-origin `/api/backend` proxy).
+
+### Dashboard sections (`frontend/components/market/`)
+
+- `market-summary-cards.tsx` — five StatCards (Total job postings, Companies
+  tracked, Skills tracked, Most demanded skill, YoY posting growth) straight
+  from `summary`; null growth renders "N/A" with a tooltip explaining no
+  comparable period; skeleton cards while loading.
+- `market-filter-panel.tsx` — draft-based filters (From/To year, Company,
+  Job family, Location, Skill category, Technical-skills-only, Sort by
+  Trending/Most demanded, Skill limit 10/15/20) fed by the filters endpoint.
+  "Apply filters" issues one query; "Reset filters" restores defaults and
+  applies; an inverted year range shows an inline error and disables Apply.
+  Posting filters and skill-scope filters are visually distinguished
+  ("posting filters change what is counted; skill-scope filters only narrow
+  which skills are analysed") — the frontend never recalculates percentages.
+- `trending-skills-section.tsx` — horizontal Recharts bar chart (postings per
+  skill) with count/percentage tooltips, plus a supporting table (Skill,
+  Category, Postings, Demand %, YoY growth, trend badge). Null growth shows
+  "N/A", never zero. Rising/Declining/Stable/Emerging badges via
+  `trend-badge.tsx`; null classification renders an outline "N/A" badge.
+- `historical-trends-section.tsx` — "Skill demand over time" line chart of
+  year-wise demand percentages with a skill selector over `historical_trends`;
+  a visible note marks the partial-year window (e.g. "Jan-Oct only") whenever
+  the dataset's latest partial year is in the filtered series — values are
+  never extrapolated.
+- `emerging-skills-section.tsx` — backend-classified emerging skills (current
+  count/demand %, previous-window count 0, "Emerging" badge) with a proper
+  empty state; the frontend never infers emerging status.
+- `company-analytics-section.tsx` — posting-count comparison bar chart plus
+  per-company cards (name, industry, postings + share %, top-skill chips with
+  counts/percentages, year-wise postings line) from `companies`.
+- `job-family-section.tsx` — posting-count bar chart per family plus cards
+  (count, share %, top-skill chips, year-wise postings) from `job_families`.
+
+All values are backend-supplied; nothing is hardcoded or re-derived
+client-side. Charts use `ResponsiveContainer` with data-driven heights and
+truncating tick formatters so long labels never overflow containers.
+
+### Error and edge-case handling
+
+- Global states on the page: loading skeletons, an error EmptyState with
+  retry (`refetch`), and an empty-filter-result EmptyState with a Reset
+  action. `keepPreviousData` keeps the previous payload visible during
+  refetches with only an "Updating…" line.
+- Filter options failing renders an inline retry banner; the panel degrades
+  gracefully without blocking the rest of the page.
+- Per-section empty states for no trending skills, no historical data, no
+  emerging skills, no companies and no job families.
+- Null growth / null trend render as "N/A" (never misleading zeros); missing
+  categories render "—".
+- Failed API responses are never replaced with frontend mock data.
+
+### Verification results
+
+- `npm run typecheck` — pass (strict mode incl. `noUncheckedIndexedAccess`).
+- `npm run lint` — pass, no warnings or errors.
+- `npm run build` — pass; `/tpo/dashboard/analytics/trending` compiles
+  (13.6 kB page, 279 kB first-load JS including Recharts).
+- Live stack check (backend on :8000 + `next dev` on :3000):
+  - Middleware: no cookie → 307 `/login?redirect=…`; `placer_role=student` →
+    307 `/dashboard`; `placer_role=admin` → 307 `/admin/dashboard`;
+    `placer_role=tpo` → 200 (route serves, RSC payload references the
+    trending page module).
+  - The exact Axios paths through the app's proxy with a real login:
+    `/api/backend/auth/login` → 200; `/api/backend/analytics/tpo/market` →
+    200 (correct aggregates, e.g. skill-category filter kept 300 postings as
+    the denominator while analysing 12 soft skills); `…/filters` → 200;
+    unknown company → 400; `limit=21` → 422.
+  - Temporary TPO verification account was deleted afterwards; operational
+    data unchanged (10 drives, 2 applications, 300 market postings).
+- There is no frontend unit/e2e test runner in this project (package.json has
+  only dev/build/lint/start/typecheck scripts), so no frontend tests were run.
+- Browser-based interactive verification was NOT performed: no desktop
+  browser was connected to the agent session. Client-side rendering,
+  React Query behaviour and nav visuals are verified by the build/type checks
+  above and by code review against the existing patterns, but a manual
+  browser pass remains recommended before sign-off.
+
+### Known limitations
+
+- Nav visibility relies on the shared TPO layout (already TPO-only); there is
+  no per-item role check to add beyond the layout guard itself.
+- The historical chart shows one skill at a time (single-series line with a
+  selector); a multi-skill comparison mode could be added later if wanted.
+- The "Updating…" refetch indicator is text-only; no spinner was added to
+  keep animations minimal.
+
+## Trending Skills & Company Requirements - Phase 5 advanced market intelligence
+
+Phase 5 deepens the Market Insights dashboard: company-to-company and
+job-family skill comparisons, richer emerging-skill analysis, trend
+explanations and multi-skill historical comparison. The existing dashboard
+was not rebuilt; sections were extended and one new section was added.
+
+### Backend: one new TPO-only endpoint
+
+Determination: the Phase 3 response already carried everything needed for the
+emerging/trend insight improvements, but it could NOT serve entity
+comparisons — each company/family only reports its top-10 skills, with no
+per-entity trend classification and no technical/soft distribution. One new
+endpoint was therefore added; no second analytics system was introduced
+(the comparison reuses the exact same aggregation math, window rules and
+classification thresholds).
+
+- `GET /api/v1/analytics/tpo/market/comparison?dimension=company|job_family&entities=…`
+  (`backend/app/routers/market_analytics.py` + `MarketAnalyticsService.get_market_comparison`).
+- `entities` is a comma-separated list of company slugs/names or job-family
+  names (case-insensitive, deduped, at most 6; unknown → 400; 7+ → 400).
+- The dimension's own filter is REPLACED by the entity selection; the other
+  posting filters still apply (`year_from`, `year_to`, `location`, plus
+  `job_family` when comparing companies / `company` when comparing
+  families). Skill-scope filters never apply (comparisons always show the
+  technical/soft split).
+- Response (`backend/app/models/market.py`): `MarketComparisonResponse`
+  {`meta` (same MarketMeta), `dimension`, `entities[]`}, where each
+  `ComparisonEntityAnalytics` has `entity_key`, `entity_label`, `industry`
+  (companies only), `posting_count`, `posting_share_pct` (share of the WHOLE
+  filtered population), `tech_skill_instances` / `soft_skill_instances` /
+  `tech_share_pct` / `soft_share_pct` (skill-demand instances = posting ×
+  skill pairs), `yearly_counts`, and `skills` — the entity's FULL skill list
+  as `TrendingSkill` objects (same trend math; `demand_pct` uses the
+  entity's own postings as denominator; entity-level comparability means an
+  entity with no postings in the previous comparable window reports
+  `trend=null`, never a fake classification). Entities with no postings
+  under the filters are returned zeroed so the UI can say so explicitly.
+- Service refactors kept the math in one place: `_trending_skill_from_record`
+  (shared model assembly), `_build_meta` (shared meta block),
+  `_validate_year_range_values` / `_year_filter` (shared validation/query
+  helpers). Behaviour of the dashboard endpoint is unchanged — the full
+  suite still passes.
+- Reads only `job_market_postings` + `market_skill_catalog` (aggregate-level
+  projection, never descriptions/JD text); `placement_drives` untouched;
+  `Depends(require_role("tpo"))` enforced.
+
+### Backend tests
+
+`backend/tests/test_market_analytics.py` grew from 22 to 31 tests. New tests
+recompute expectations from the raw seeded postings and pin: TPO-only
+authorization (401/403), full-skill lists with the entity's own denominator,
+technical/soft instance counts and shares, shared vs unique skills within a
+selected group, Jan-Oct window rules per entity, emerging-within-entity
+(mini dataset: Rust is emerging for Alpha Labs), job-family comparison,
+posting-filter interplay (nonzero company × family counts), validation
+errors (unknown entities, 7+ entities, empty list, invalid dimension) and
+the zeroed-entity case. Full backend suite: 238 passed.
+
+### Frontend types and hook
+
+- `frontend/types/market-analytics.ts` — added `ComparisonDimension`,
+  `ComparisonEntityAnalytics`, `MarketComparisonResponse`,
+  `MarketComparisonParams` (mirroring the Pydantic models exactly).
+- `frontend/hooks/use-market-analytics.ts` — added
+  `useMarketComparison(request)` (`GET /analytics/tpo/market/comparison`)
+  with the serialised params in the query key
+  (`["market", "comparison", params]`), disabled until a valid selection
+  exists, `placeholderData: keepPreviousData`, 1-hour staleTime. Params
+  builder sends only set values and the dimension-appropriate cross filter.
+
+### Derived-insight formulas (`frontend/lib/market-insights.ts`, documented)
+
+All values are backend-supplied; the helpers never re-derive percentages and
+never treat null growth as zero. New logic is presentation-level ranking and
+classification with deterministic tie-breaking (skill name):
+
+- Emerging classification (first match wins):
+  1. **Newly emerging** — the skill is in the backend's `emerging_skills`
+     (backend only classifies `emerging` when the previous comparable window
+     had postings in the filtered population, so filter-excluded periods can
+     never produce this label).
+  2. **Insufficient data** — latest comparable growth (`yoy_growth_pct`) is
+     null → shown as "Not enough comparable data", never classified.
+  3. **Fast growing** — latest comparable growth ≥ +25% (documented
+     constant `FAST_GROWTH_THRESHOLD_PCT`, stricter than the backend's
+     "rising" boundary of +10%).
+  4. **Consistently growing** — the skill's historical series has ≥ 2
+     non-null comparable period-over-period growth values and every one is
+     > 0 (the first dataset year has no comparable predecessor; its null
+     growth is skipped, not read as zero).
+  5. **Recently accelerating** — the latest two comparable growth values
+     both exist and the latest is strictly greater than the preceding one.
+  6. **Rising** — backend classification `rising` (growth ≥ +10%, not fast).
+  7. **Stable** — otherwise (remaining candidates all have positive growth
+     below +10%, which the backend classifies as stable).
+- Candidate pool = `emerging_skills` ∪ trending skills with positive
+  comparable growth, joined with `historical_trends` for trajectories.
+  Emerging skills outside the trending limit are synthesised purely from
+  backend `emerging` + `historical_trends` fields (growth null by the
+  backend's own rule).
+- Trend explanations (tooltip on each trend badge): built from
+  `trend` + `yoy_growth_pct` — "no comparable previous period" (null),
+  "appeared in the current period but not in the comparable previous period"
+  (emerging), "increased/decreased by X%" (rising/declining), "stayed within
+  the stable range (within ±10%)" (stable).
+- Trend observations (deterministic, each omitted when its evidence is
+  absent): strongest comparable growth (max `yoy_growth_pct` among listed
+  trending skills); highest demand (max `posting_count`); sustained growth
+  (over ALL `historical_trends`: ≥ 2 non-null growth values, all > 0);
+  declining/stable lists (backend classifications); multi-family reach
+  (≥ 2 families' top-skills lists contain the skill); company concentration
+  (max single-company `top_skills` count ÷ the skill's total historical
+  postings across filtered years, shown when ≥ 50%).
+- Comparison derivations: `buildComparisonMatrix` (union of skills, null
+  cell = genuinely not required), `buildSharedSkills` (required by ≥ 2
+  selected entities), `buildUniqueSkills` (required by exactly one, with the
+  skill's overall filtered postings from `historical_trends` so a
+  group-unique skill that is also rare market-wide is flagged — threshold
+  `RARE_MARKET_WIDE_THRESHOLD` = 5% of the filtered postings).
+
+### Dashboard changes (`frontend/components/market/`, `frontend/app/(tpo)/…/trending/page.tsx`)
+
+- **UI text cleanup (requested)**: removed the "Demo Dataset · Mock Market
+  Data" badge (and its FlaskConical import) from the page header; removed the
+  filters CardDescription ("Posting filters change what is counted…") and the
+  trending CardDescription ("Ranked by the backend's sorting choice…").
+  Filters, sorting, the comparison-period header line, the partial-year
+  notes and all backend mock metadata are untouched. Verified: the three
+  strings are absent from the served SSR HTML and from the client chunks.
+- `trending-skills-section.tsx` — table gained Current period / Previous
+  period / Trend score columns (header titles carry the period labels from
+  `meta`) and every trend badge now has a native tooltip with the generated
+  explanation; a new `trend-insights.tsx` block renders the deterministic
+  observations inside the same card.
+- `historical-trends-section.tsx` — multi-skill comparison: add-skill select
+  (up to 4), removable chips, one line per skill coloured from a fixed
+  palette, shared tooltip showing each skill's demand % AND its backend
+  per-year growth ("no comparable previous period" for nulls), and a "latest
+  comparable window" line from `meta`. Partial-year note preserved.
+- `emerging-skills-section.tsx` — rebuilt as "Emerging & rising skills":
+  compact summary strip (emerging count, fast-growing count, top emerging
+  current-window demand %, strongest comparable growth — all backend
+  values), rank-by control (current demand / growth), classification badges,
+  and a per-skill "History" toggle that renders the skill's year-wise demand
+  trajectory inline (with the partial-year note). Empty state explains that
+  incomparable windows produce unavailable growth, not zeros.
+- `entity-compare-panel.tsx` (new) — generic draft-based comparison panel:
+  multi-select with removable chips, Apply/Reset, min-selection guard
+  (companies: ≥ 2; families: ≥ 1 for inspection), max 6 (backend cap), and
+  results with loading/error/empty states and an "Updating comparison…"
+  line. Renders per-entity summary cards (postings + share, technical/soft
+  mix with instance counts, most demanded skill, strongest entity-level
+  growth, year-wise counts), then for ≥ 2 entities the skill demand matrix
+  (top 12 by demand with a "Show all" toggle), the shared-skills table
+  ("k of n selected", per-entity demand chips) and the entity-specific
+  skills grouped by owner with a "rare market-wide" marker. A note states
+  which dashboard posting filters the comparison reuses and that
+  skill-category filters don't apply.
+- `comparison-section.tsx` (new) — one dedicated card at the bottom with
+  Radix tabs ("Companies" / "Job families") hosting the two panel instances,
+  keeping the main dashboard uncluttered. Overall per-skill posting counts
+  for the rarity marker are summed from the backend's historical yearly
+  counts.
+- `job-family-section.tsx` — description now points to the comparison
+  section for per-family inspection (full skill list, growth, tech/soft
+  mix). No other changes.
+- `page.tsx` — wires the new props/sections; nothing else moved.
+
+### Verification results
+
+- `npm run typecheck` — pass; `npm run lint` — pass (no warnings/errors);
+  `npm run build` — pass (`/tpo/dashboard/analytics/trending` 24.3 kB).
+- Full backend suite: 238 passed (229 prior + 9 new comparison tests).
+- Live stack (backend :8001, frontend :3000 with `NEXT_PUBLIC_API_URL`
+  pointed at it because a zombie socket from a killed process held :8000):
+  35/35 live checks passed — 401/403/200 authorization, response shape,
+  entity-denominator math, tech/soft instance consistency, Jan-Oct window
+  growth per entity, shared/unique skill consistency, main-endpoint
+  `top_skills` ⊆ comparison skills, job-family comparison, job-family and
+  location filter interplay (nonzero counts match the dashboard summary),
+  unknown entity → 400, 7 entities → 400, empty list → 400, no-matching
+  postings → 200 zeroed entity, login + comparison through the exact
+  `/api/backend` proxy path the hook uses.
+- Data integrity: `job_market_postings` = 300, `market_skill_catalog` = 52,
+  `placement_drives` = 10, `applications` = 2 — unchanged; temporary
+  verification accounts (TPO + student) deleted afterwards.
+- Text-removal verification: the three strings are absent from the served
+  page HTML and from the compiled client chunks; kept labels (section
+  titles, filter actions) confirmed present in the chunks.
+- Browser-based interactive verification was NOT performed: no desktop
+  browser was connected to the agent session (same limitation as Phase 4).
+  Chart interactions, tab switching and comparison UX need a manual browser
+  pass before sign-off.
+
+### Known limitations
+
+- The comparison reuses the dashboard's posting filters (year range,
+  location, opposite-dimension filter) but not skill-scope filters, by
+  design (the technical/soft split must stay visible); noted in the UI.
+- Multi-family reach and company concentration observations count only each
+  family/company's TOP-SKILLS list (the API supplies top 10 per entity);
+  stated in the observation text.
+- Company/job-family comparisons cap at 6 entities (backend-enforced);
+  the demand matrix previews 12 rows with a "Show all" toggle.
+- Trend explanations use native `title` tooltips (no popover dependency).
+- Emerging classification thresholds (+25% fast growth, 5% rarity) are
+  documented presentation-level constants, not backend contract.
+
+
+---
+
+## Phase 6 — End-to-End Integration, RBAC & Regression Audit (2026-11-16)
+
+Audit-and-fix phase over the completed Phase 1-5 Market Insights feature. No
+new features; the API contract, dataset and analytics formulas are unchanged.
+
+### Audit scope
+
+- Backend: `app/models/market.py`, `app/repositories/job_posting_repository.py`,
+  `app/services/market_analytics_service.py`, `app/routers/market_analytics.py`,
+  `app/core/database.py`, `app/core/config.py`, `app/core/deps.py`,
+  `app/main.py`, `tests/test_market_dataset.py`, `tests/test_market_analytics.py`,
+  `scripts/seed_job_market.py` (reset semantics only).
+- Frontend: `app/(tpo)/layout.tsx`, `app/(tpo)/tpo/dashboard/analytics/trending/page.tsx`,
+  all `components/market/*`, `hooks/use-market-analytics.ts`,
+  `types/market-analytics.ts`, `lib/market-insights.ts`, `lib/api-client.ts`,
+  `middleware.ts`, `next.config.mjs`.
+- Documentation: this file.
+
+### API integration verification
+
+- All three endpoints are registered under `API_V1_PREFIX + /analytics`
+  (`/api/v1/analytics/tpo/market`, `/filters`, `/comparison`), GET-only,
+  with Pydantic response models (`MarketAnalyticsResponse`,
+  `MarketFiltersResponse`, `MarketComparisonResponse`).
+- Frontend TypeScript types mirror the backend models field-for-field,
+  including `dict[int, int]` -> `Record<string, number>` JSON string-key
+  handling and all nullability (`trend`, `yoy_growth_pct`,
+  `yoy_posting_growth_pct`, `industry`).
+- Query-parameter names/types match (`year_from`, `year_to`, `company`,
+  `job_family`, `location`, `skill_category`, `technical_only`, `sort`,
+  `limit`; comparison: `dimension`, `entities`, plus the posting filters).
+  Null/empty filter values are never serialised by the hooks.
+- Verified the exact frontend paths (`/api/backend/*` rewrite -> FastAPI
+  `/api/v1/*`) live: TPO login through the proxy, market/filters/comparison
+  200 with the Bearer token, 401 unauthenticated, 403 student, refresh-token
+  cookie round-trip (cookie set at login, `/auth/refresh` via cookie returns
+  a working token). Comparison through the proxy respects the dashboard
+  posting filters (company x family = 29 postings, matching Phase 5).
+- No duplicate requests: draft-based Apply/Reset (filters and comparison
+  selection each issue exactly one request per Apply); query keys include
+  every relevant parameter; `keepPreviousData` scoped per key so a filter
+  change can never display another combination's results as current (an
+  "Updating..." status line is shown while a refetch is in flight; on error
+  the error state is rendered, never fake data).
+
+### RBAC verification (live)
+
+All three endpoints, backend on :8001 (zombie socket still holds :8000):
+
+| User            | market | filters | comparison |
+|-----------------|--------|---------|------------|
+| Unauthenticated | 401    | 401     | 401        |
+| TPO             | 200    | 200     | 200        |
+| Student         | 403    | 403     | 403        |
+| Admin           | 403    | 403     | 403        |
+
+- Garbage/expired-format tokens -> 401; wrong auth scheme -> 401.
+- Invalid comparison values: `dimension=skill`/missing -> 422, unknown
+  company -> 400, unknown job family -> 400, empty/whitespace entity list
+  -> 400, 7 entities -> 400, bad cross-dimension company filter -> 400,
+  `year_from > year_to` -> 400, out-of-range year -> 422, unknown location
+  -> 400.
+- Invalid main-endpoint values: unknown company/location -> 400,
+  `job_family`/`skill_category`/`sort` enum mismatches -> 422,
+  `limit` 0/21 -> 422.
+- Frontend access control: "Market Insights" nav item exists ONLY in the
+  TPO layout; middleware redirects unauthenticated (-> /login), student
+  (-> /dashboard) and admin (-> /admin/dashboard) requests away from
+  `/tpo/dashboard/analytics/trending` (verified live); backend
+  authorization remains the source of truth (`require_role("tpo")`).
+- No market route or endpoint is reachable without a TPO JWT; no public
+  route exposes market data.
+
+### Data isolation verification
+
+- The service instantiates ONLY `JobMarketPostingRepository` and
+  `MarketSkillCatalogRepository` (collections `job_market_postings` +
+  `market_skill_catalog`). Live counts unchanged across the whole audit:
+  `placement_drives` = 10, `applications` = 2, `assessments` = 10,
+  `assessment_attempts` = 4, `companies` = 10; market = 300 postings / 52
+  catalog entries.
+- All market documents carry `source="mock"` and
+  `dataset_version="2026.11"`; the seed `--reset` deletes only
+  `source="mock"` documents and protects non-mock catalog slugs.
+- No endpoint mutates any collection (all reads); the seed script is not
+  wired into startup — `ensure_indexes()` only creates indexes.
+- Aggregate responses contain no `jd_text`/`description` fields and no
+  operational drive data (verified in live payloads); the posting
+  projection excludes descriptions and JD text by construction.
+- Temporary accounts created for the audit (TPO, student, admin) were
+  deleted afterwards, including their orphaned refresh tokens; users with
+  temp emails = 0; 9 live users remain.
+
+### Analytics consistency verification
+
+- Demand formula pinned by tests: distinct postings requiring the skill /
+  filtered posting population x 100; re-verified live against the API
+  response (`demand_pct == round(100*posting_count/total_postings, 1)`).
+- Comparison: each entity's `demand_pct` uses the entity's own postings
+  (re-verified live per entity); shared/unique skills derived from full
+  entity skill lists; "rare market-wide" threshold = skill's overall
+  filtered postings < 5% (`RARE_MARKET_WIDE_THRESHOLD`).
+- Trend thresholds pinned by unit tests: >= +10% rising, <= -10%
+  declining, otherwise stable; emerging only when previous == 0 and
+  current > 0 with a comparable previous window; missing/filter-excluded
+  history -> `trend=None`, never a classification; null growth rendered
+  "N/A" / "Not enough comparable data", never zero.
+- Partial-year rule pinned by tests: Jan-Oct 2026 vs Jan-Oct 2025 (window
+  difference exercised by the dataset itself); historical charts render
+  backend-supplied values only.
+- `lib/market-insights.ts` reviewed line-by-line against its doc comments:
+  emerging candidate pool, first-match classification order, +25% fast
+  growth, >=2 non-null positive growths for consistent/sustained growth,
+  correctly ordered acceleration comparison, multi-family reach via
+  family `top_skills`, company concentration via company `top_skills`
+  divided by the skill's summed historical counts (>= 50%), name
+  tie-breaking and 5-item caps all match; insights are omitted when
+  evidence is missing. No discrepancy found.
+
+### Performance findings
+
+- Median live latencies (local, 300-posting dataset): market 36 ms,
+  market limit=20 36 ms, filters 18 ms, comparison (3 companies) 39 ms,
+  comparison (6 families) 39 ms.
+- Repository read uses a projection with aggregate-level fields only (no
+  descriptions/JD text), bounded at the existing 5,000-posting cap; one
+  small catalog read per request.
+- Comparison performs one bounded filtered find + one bounded directory
+  find + one catalog read; per-entity aggregation is in-memory from the
+  same rows (no N+1 pattern). The extra directory scan is negligible at
+  the current scale and was left as-is to keep the code simple.
+- No new caching layer introduced (nothing measurable to justify it).
+- Existing market indexes (year, company_slug, job_family, location,
+  skill arrays, source, external_id unique) are sufficient for the
+  current dataset size.
+
+### Production configuration findings
+
+- No dev-only URLs hardcoded: the frontend base URL is the same-origin
+  `/api/backend` proxy, whose destination is `NEXT_PUBLIC_API_URL`
+  (defaults to localhost only when unset); the client keeps auth cookies
+  same-site.
+- No secrets committed: `.env`/`.env.local` are untracked; only
+  `.env.example` files are in git. Production guard
+  (`validate_production_config`) still blocks default JWT secret,
+  DEBUG=true, non-HTTPS cookies and wildcard CORS in production.
+- No test accounts/temp credentials remain; no temporary verification
+  scripts inside the repo (audit scripts lived in the OS temp dir and
+  were deleted).
+- No new runtime dependencies (frontend and backend dependency lists
+  unchanged).
+- Startup remains safe: indexes only, fail-fast Mongo ping, production
+  config validation; routers unchanged.
+
+### Issues found and fixed
+
+- `app/main.py`: removed a stale duplicated comment block (the
+  request-id middleware explanation appeared twice). Comment-only fix.
+- Flaky environmental failure (documented, not fixed in code): one
+  full-suite run had `tests/test_matching.py::test_drive_match_score_...
+  fail with "DLL load failed while importing _liblinear: An Application
+  Control policy has blocked this file" (sklearn). The test passes in
+  isolation and the suite re-ran 238/238 passed twice afterwards. Not
+  related to the market feature.
+- Note: Next.js dev-mode SSR renders the (tpo) layout's loading shell
+  (client-side auth provider), so page text is verified in compiled
+  chunks rather than the initial SSR HTML.
+
+### Test results (this phase)
+
+- Backend market tests: 42 passed (31 analytics + 11 dataset).
+- Full backend suite: 238 passed (re-run clean twice; the single earlier
+  matching-test failure was the environmental DLL flake above).
+- `npm run typecheck` — pass. `npm run lint` — pass (no warnings/errors).
+  `npm run build` — pass (trending page 24.3 kB / 290 kB first-load).
+- 55/55 live backend checks (RBAC matrix, token handling, validation
+  battery, response-shape invariants, entity math, no-JD-text leaks).
+- 23 live proxy checks: login + refresh cookie through `/api/backend`,
+  all three endpoints through the proxy, student 403, middleware
+  redirects for unauth/student/admin.
+- Text-removal regression: the three Phase 5-removed strings are absent
+  from compiled client chunks and server bundles; kept labels
+  ("Market Insights", section titles, "Apply filters",
+  "Reset comparison", classification labels) confirmed present.
+
+### Remaining limitations
+
+- Interactive browser verification still NOT performed (no desktop
+  browser connected to the agent session); chart interactions and
+  comparison UX need the manual pass already documented in Phase 4/5.
+- MongoDB-unavailable behaviour verified at code level only (fail-fast
+  ping at startup; runtime connection errors surface as the generic 500
+  "unexpected error" response with no stack trace) — the shared local
+  MongoDB was not stopped for a live test to avoid disturbing
+  operational data.
+- Comparison keeps its one extra bounded directory scan (documented
+  above); revisit only if the dataset grows by orders of magnitude.
+
+## Phase 7 - Per-Drive Rankings & Student Participation Details in TPO Analytics (2026-11-16)
+
+### What changed
+
+The standalone "Drive assessment rankings" section was **removed** from the TPO
+Analytics page and relocated into each drive's expanded breakdown. Every drive
+card on the analytics page now expands into three tabs:
+
+1. **Rankings** - the same ranking previously shown standalone, scoped to that
+   one drive (rank, student name, department, CGPA, best score, submission date).
+2. **Applied students** - everyone who applied to that drive via the real
+   `applications` collection (all statuses shown: applied / shortlisted /
+   rejected / selected, with department, batch year and applied date).
+3. **Test participants** - students with an **actual assessment attempt** on
+   the drive's required assessment. An application alone, or an assigned
+   assessment, is never treated as participation.
+
+The drive card header also gained backend-computed overview counts:
+`participant_count` (unique students who started the drive assessment) and
+`submitted_participant_count`, plus the linked assessment title.
+
+### Backend
+
+- `models/analytics.py`: `TpoAnalyticsResponse.drive_assessment_rankings`
+  removed (relocated); `DriveFunnel` gained additive fields
+  (`required_assessment_id`, `assessment_title`, `participant_count`,
+  `submitted_participant_count`); new response models `DriveApplicantEntry`,
+  `DriveApplicantsResponse`, `DriveParticipantEntry`, `DriveParticipantsResponse`.
+  The existing `DriveAssessmentRanking` model is reused by the new per-drive
+  endpoint (no duplicate ranking system).
+- `services/analytics_service.py`:
+  - New `AnalyticsError(message, status_code)` exception, translated to
+    `HTTPException` in the router (same pattern as `DriveError`).
+  - `_get_owned_drive()` enforces the same ownership rule as the
+    drive-management endpoints: unknown id -> 404, another TPO's drive -> 403.
+  - Ranking logic reused unchanged in formula (best SUBMITTED attempt per
+    student, difficulty-at-time marks via `_attempt_score_pct`); ties now break
+    deterministically by earlier submission time then student id (the old code
+    broke ties by dict insertion order). In-progress attempts are never ranked.
+  - Drive-exact association: the attempt pool for rankings AND participants is
+    `attempts(assessment_id = drive.required_assessment_id)` **restricted to the
+    drive's own applicant set**. In the normal case (one drive per assessment)
+    this equals the old pool (drive assessments can only be started through an
+    application), but when two drives share one assessment the applicant-set
+    restriction prevents attempts from leaking across drives.
+  - Participants: one row per student (never per attempt). A student's row is
+    their best submitted attempt, or their latest in-progress attempt (score
+    null) if they never submitted - an in-progress attempt is a real attempt;
+    merely being assigned an assessment is not.
+  - Applicants: paginated from the `applications` collection (all statuses,
+    `applied_at desc`), one batched `$in` student lookup per page (no N+1);
+    search filters by student name via an escaped case-insensitive regex
+    resolved against the `students` collection first (never a name-based join).
+  - All document-id `$in` queries convert string ids to `ObjectId` explicitly
+    (matching `question_repository` precedent). Company lookups in the main
+    analytics loop were batched into a single `$in` query (previously one
+    per drive); the per-entry student lookup in the ranking (a pre-existing
+    N+1) was also replaced with one batched query.
+  - Missing/deleted student profiles render as "Unknown student" instead of
+    crashing; `Unknown company` fallback retained.
+- `routers/analytics.py`: three new TPO-only endpoints
+  (`require_role("tpo")` on every one):
+  - `GET /api/v1/analytics/tpo/drives/{drive_id}/ranking`
+  - `GET /api/v1/analytics/tpo/drives/{drive_id}/applicants` (page/limit/search)
+  - `GET /api/v1/analytics/tpo/drives/{drive_id}/participants` (page/limit/search)
+  Pagination: page >= 1, limit 1-100 (default 20), search max 100 chars.
+
+### Frontend
+
+- `types/analytics.ts`: standalone rankings field removed from `TpoAnalytics`;
+  `DriveFunnel` extended; new applicant/participant interfaces added.
+- `hooks/use-analytics.ts`: `useDriveRanking`, `useDriveApplicants`,
+  `useDriveParticipants` - all keyed on drive id + page + trimmed search,
+  `enabled` only when a drive panel is open (no requests for collapsed
+  drives), `keepPreviousData` so the current list stays visible while the
+  next page/search loads.
+- New `components/analytics/drive-breakdown.tsx`: expandable per-drive cards
+  with Rankings / Applied students / Test participants tabs (Radix Tabs),
+  debounced (400 ms) server-side search, Previous/Next pagination, per-tab
+  loading skeletons, error retry boxes and contextual empty states
+  (no-assessment vs no-attempts vs no-applicants vs no-search-match).
+- `app/(tpo)/tpo/dashboard/analytics/page.tsx`: standalone rankings card
+  deleted; per-drive breakdown rendered via `<DriveBreakdown>`.
+- Chunk-level verification against a fresh production build: the old
+  standalone-section strings are absent from compiled output ("Drive
+  assessment rankings"), while the new labels are present.
+
+### Tests
+
+- New `backend/tests/test_drive_analytics_detail.py` (15 tests): RBAC matrix
+  (unauth 401 / student 403 / admin 403 / TPO 200 on all three endpoints),
+  cross-TPO ownership 403, unknown drive 404, applicants include every status
+  with metadata, pagination + empty state, name search, no cross-drive
+  applicants, deleted student profile safety, participants require real
+  attempts (applied-but-never-started excluded, in-progress shown without
+  score, submitted with score), retakes never inflate unique participant
+  counts (one row per student, best attempt wins), attempts from practice
+  assessments and from other drives never leak in (incl. the shared-assessment
+  cross-drive case), ranking orders by score and excludes in-progress,
+  deterministic tie-breaking, 404 for a drive without a required assessment,
+  and the main analytics response no longer carrying standalone rankings but
+  reporting per-drive participation counts.
+- `tests/test_drive_assessment_ranking.py` updated to hit the per-drive
+  ranking endpoint (same assertions; the feature was relocated, not removed).
+- Full backend suite: **253 passed** (238 before + 15 new), 0 failures.
+- Frontend: `typecheck` and `lint` clean; `next build` succeeds
+  (analytics page 8.42 kB / 250 kB first load).
+
+### Live verification
+
+- Backend on :8001 + dev frontend on :3000 (zombie :8000 socket still held).
+- Temporary dataset (1 admin, 1 TPO, 3 students, 1 assessment, 1 drive,
+  3 applications, 2 submitted attempts 100%/0%, 1 in-progress retake) created
+  and verified live, then **fully deleted**: placement_drives back to 10,
+  companies 10, users 9, applications 2, assessments 10, attempts 4, postings
+  300, catalog 52; 0 temp users, 0 temp refresh tokens, 0 orphaned references.
+- Live RBAC re-verified on all three endpoints (401/403/403/200).
+- Live ranking order (100% then 0%, applied-only student absent), applicant
+  statuses, participant statuses/scores and name search all confirmed.
+- Authenticated page load 200; anonymous access redirects (307) via middleware.
+
+### Limitations
+
+- No desktop browser was connected to this session (same as Phases 4-6), so
+  the interactive UI (expanding drive cards, tab switching, search/pagination
+  interactions, responsive layout) still needs a manual visual pass; verified
+  via the API, compiled chunks, and HTTP page/middleware checks instead.
+- `StudentInDB` has **no roll-number field**, so lists identify students by
+  name + department + batch year + internal student id (no fabricated ids).
+- When two drives reference the *same* assessment, the assessment's attempt
+  pool is shared; the applicant-set restriction keeps each drive's lists
+  correct, but the ranking endpoint's pool is still keyed by assessment id
+  (existing convention), scoped to that drive's applicants.
+- Applicants pagination totals count applications; a legacy duplicate
+  application for the same student would be deduped within a page but could
+  make `total` slightly larger than displayed rows (one application per
+  drive/student is enforced at creation, so this is defensive only).
+- The `next lint` deprecation warning (Next.js 16 migration notice) is
+  pre-existing tooling noise, untouched.

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -58,6 +59,74 @@ export default function AssessmentResultsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {result.answers.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Question breakdown</CardTitle>
+            <CardDescription>How each question was graded.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {result.answers.map((answer, index) => (
+              <div key={`${answer.question_id}-${index}`} className="rounded-md border border-border p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    variant={
+                      answer.is_correct === true
+                        ? "success"
+                        : answer.is_correct === false
+                          ? "destructive"
+                          : "secondary"
+                    }
+                  >
+                    {answer.is_correct === true
+                      ? "Correct"
+                      : answer.is_correct === false
+                        ? "Incorrect"
+                        : "Pending review"}
+                  </Badge>
+                  <Badge variant="secondary" className="uppercase">
+                    {answer.type ?? "unknown"}
+                  </Badge>
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {answer.marks_awarded}/{answer.max_marks} marks
+                  </span>
+                </div>
+                <p className="mt-2 text-sm">{answer.text}</p>
+                {answer.code_result && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {answer.code_result.passed}/{answer.code_result.total} test cases passed
+                  </p>
+                )}
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs text-muted-foreground">Your answer</summary>
+                  <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-secondary/50 p-2 font-mono text-xs">
+                    {answer.response || "(no response)"}
+                  </pre>
+                </details>
+                {answer.code_result && answer.code_result.results.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {answer.code_result.results.map((testResult) => (
+                      <div key={testResult.index} className="flex items-center gap-2 text-xs">
+                        <Badge variant={testResult.passed ? "success" : "destructive"}>
+                          {testResult.passed ? "Pass" : testResult.status.replace(/_/g, " ")}
+                        </Badge>
+                        <span>
+                          Case {testResult.index}
+                          {testResult.name ? ` — ${testResult.name}` : ""}
+                        </span>
+                        {testResult.is_hidden && (
+                          <span className="text-muted-foreground">(hidden)</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="flex justify-center gap-3">
         <Button asChild variant="secondary">

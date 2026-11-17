@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { Briefcase, MapPin, Sparkles } from "lucide-react";
+import { Briefcase, MapPin, Sparkles, Filter } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -19,15 +21,46 @@ function isPastDeadline(iso: string): boolean {
 }
 
 export default function DrivesPage() {
-  const { data: drives, isLoading } = useDrives();
+  const [statusFilter, setStatusFilter] = useState<"open" | "closed" | "all">("all");
+  const { data: drives, isLoading } = useDrives(statusFilter === "all" ? undefined : statusFilter);
   const { data: recommended, isLoading: recommendedLoading, error: recommendedError } = useRecommendedDrives(3);
   const recommendedUnavailable = (recommendedError as any)?.response?.status === 503;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-semibold">Placement drives</h1>
-        <p className="text-sm text-muted-foreground">Browse open drives and apply with your active resume.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="font-display text-2xl font-semibold">Placement drives</h1>
+          <p className="text-sm text-muted-foreground">Browse open drives and apply with your active resume.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant={statusFilter === "open" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setStatusFilter("open")}
+            className="gap-1.5"
+          >
+            <Filter className="h-3.5 w-3.5" />
+            Open
+          </Button>
+          <Button
+            variant={statusFilter === "closed" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setStatusFilter("closed")}
+            className="gap-1.5"
+          >
+            <Filter className="h-3.5 w-3.5" />
+            Closed
+          </Button>
+          <Button
+            variant={statusFilter === "all" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setStatusFilter("all")}
+            className="gap-1.5"
+          >
+            All
+          </Button>
+        </div>
       </div>
 
       {!recommendedUnavailable && (recommendedLoading || (recommended && recommended.length > 0)) && (

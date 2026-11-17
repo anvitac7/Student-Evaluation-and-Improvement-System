@@ -1,6 +1,6 @@
 import io
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -84,14 +84,22 @@ def _to_detail(resume: ResumeInDB) -> ResumeDetail:
 
 @router.post("", response_model=ResumeUploadResponse, status_code=201)
 async def upload_resume(
+    request: Request,
     file: UploadFile = File(...),
     current_user: CurrentUser = Depends(require_role("student")),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
-    file_bytes = await file.read()
     service = ResumeService(db)
     try:
-        resume = await service.upload_resume(current_user.id, file.filename or "resume.pdf", file_bytes)
+        # Reject an oversized body on the declared Content-Length before any
+        # byte is buffered, then read with a hard streaming cap. Either alone
+        # is bypassable (a client can understate the header, or use chunked
+        # encoding and omit it entirely), so both run.
+        service.reject_oversized_content_length(request.headers.get("content-length"))
+        file_bytes = await service.read_upload_capped(file)
+        resume = await service.upload_resume(
+            current_user.id, file.filename or "resume.pdf", file_bytes
+        )
     except ResumeError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 

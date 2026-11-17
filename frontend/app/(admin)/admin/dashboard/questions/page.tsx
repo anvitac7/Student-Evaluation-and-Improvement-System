@@ -203,6 +203,16 @@ function QuestionsTab() {
                     <Badge variant="secondary" className="uppercase">
                       {q.type}
                     </Badge>
+                    {q.type === "coding" && q.language && (
+                      <Badge variant="outline" className="capitalize">
+                        {q.language}
+                      </Badge>
+                    )}
+                    {q.type === "coding" && (
+                      <span>
+                        {q.test_cases.length} test case{q.test_cases.length === 1 ? "" : "s"}
+                      </span>
+                    )}
                     <span>{q.marks} marks</span>
                   </div>
                 </div>

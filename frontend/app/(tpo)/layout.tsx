@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { BarChart3, Briefcase, LayoutDashboard } from "lucide-react";
+import { BarChart3, Briefcase, LayoutDashboard, TrendingUp } from "lucide-react";
 import { useEffect } from "react";
 
 import { DashboardShell, initialsFrom, type DashboardNavItem } from "@/components/shared/dashboard-shell";
@@ -10,7 +10,10 @@ import { useAuth } from "@/providers/auth-provider";
 const NAV_ITEMS: DashboardNavItem[] = [
   { href: "/tpo/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
   { href: "/tpo/dashboard/drives", label: "Drives", icon: Briefcase },
-  { href: "/tpo/dashboard/analytics", label: "Analytics", icon: BarChart3 },
+  // Exact match so the trending (Market Insights) sub-route doesn't also
+  // highlight "Analytics".
+  { href: "/tpo/dashboard/analytics", label: "Analytics", icon: BarChart3, exact: true },
+  { href: "/tpo/dashboard/analytics/trending", label: "Market Insights", icon: TrendingUp },
 ];
 
 /**

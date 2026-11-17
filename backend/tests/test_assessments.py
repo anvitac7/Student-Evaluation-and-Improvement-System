@@ -302,6 +302,113 @@ async def test_pool_exhaustion_auto_submits(client):
 
 
 @pytest.mark.asyncio
+async def test_finish_attempt_submits_with_answers_so_far(client):
+    admin_token = await _register_login_admin(client, "finish.admin@college.edu")
+    assessment_id = await _setup_assessment_with_one_question_per_difficulty(
+        client, admin_token, "FinishCat"
+    )
+
+    student_token = await _register_login_student(client, "finish.student@college.edu")
+    start = await _start_attempt(client, student_token, assessment_id)
+    attempt_id = start.json()["attempt_id"]
+    session_token = start.json()["session_token"]
+    first_question_id = start.json()["next_question"]["id"]
+
+    answer = await _answer(client, student_token, attempt_id, session_token, first_question_id, "A")
+    assert answer.status_code == 200
+    assert answer.json()["next_question"] is not None
+
+    finish = await client.post(
+        f"/api/v1/assessments/attempts/{attempt_id}/finish",
+        headers=_auth_headers(student_token),
+        json={"session_token": session_token},
+    )
+    assert finish.status_code == 200, finish.text
+    body = finish.json()
+    assert body["status"] == "submitted"
+    assert body["questions_answered"] == 1
+    assert body["total_marks"] == 3
+    assert body["max_possible_marks"] == 3
+    assert body["submitted_at"] is not None
+
+    results = await client.get(
+        f"/api/v1/assessments/attempts/{attempt_id}/results",
+        headers=_auth_headers(student_token),
+    )
+    assert results.status_code == 200
+    assert results.json()["status"] == "submitted"
+    assert results.json()["questions_answered"] == 1
+
+    # A finished attempt cannot be answered or finished again.
+    again = await client.post(
+        f"/api/v1/assessments/attempts/{attempt_id}/finish",
+        headers=_auth_headers(student_token),
+        json={"session_token": session_token},
+    )
+    assert again.status_code == 400
+    assert "already been submitted" in again.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_start_resumes_an_in_progress_attempt(client):
+    admin_token = await _register_login_admin(client, "resume.admin@college.edu")
+    assessment_id = await _setup_assessment_with_one_question_per_difficulty(
+        client, admin_token, "ResumeCat"
+    )
+
+    student_token = await _register_login_student(client, "resume.student@college.edu")
+    first = await _start_attempt(client, student_token, assessment_id)
+    assert first.status_code == 201
+    first_body = first.json()
+
+    resumed = await _start_attempt(client, student_token, assessment_id)
+    assert resumed.status_code == 201, resumed.text
+    resumed_body = resumed.json()
+    assert resumed_body["attempt_id"] == first_body["attempt_id"]
+    assert resumed_body["session_token"] == first_body["session_token"]
+    assert resumed_body["next_question"]["id"] == first_body["next_question"]["id"]
+    assert 0 < resumed_body["time_remaining_sec"] <= resumed_body["time_limit_sec"]
+
+
+@pytest.mark.asyncio
+async def test_expired_in_progress_attempt_is_closed_before_new_start(client):
+    from datetime import datetime, timedelta
+
+    from bson import ObjectId
+
+    from app.core import database as db_module
+
+    admin_token = await _register_login_admin(client, "expired.admin@college.edu")
+    assessment_id = await _setup_assessment_with_one_question_per_difficulty(
+        client, admin_token, "ExpiredCat"
+    )
+
+    student_token = await _register_login_student(client, "expired.student@college.edu")
+    first = await _start_attempt(client, student_token, assessment_id)
+    assert first.status_code == 201
+    first_attempt_id = first.json()["attempt_id"]
+
+    # Simulate the student leaving the tab open until the server-side time
+    # limit elapsed without answering.
+    await db_module.mongodb.db.assessment_attempts.update_one(
+        {"_id": ObjectId(first_attempt_id)},
+        {"$set": {"started_at": datetime.utcnow() - timedelta(seconds=3600)}},
+    )
+
+    second = await _start_attempt(client, student_token, assessment_id)
+    assert second.status_code == 201, second.text
+    second_body = second.json()
+    assert second_body["attempt_id"] != first_attempt_id
+    assert second_body["time_remaining_sec"] > 1700
+
+    old_doc = await db_module.mongodb.db.assessment_attempts.find_one(
+        {"_id": ObjectId(first_attempt_id)}
+    )
+    assert old_doc["status"] == "submitted"
+    assert old_doc["submitted_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_answering_wrong_question_id_rejected(client):
     admin_token = await _register_login_admin(client, "wrongid.admin@college.edu")
     assessment_id = await _setup_assessment_with_one_question_per_difficulty(client, admin_token, "WrongIdCat")

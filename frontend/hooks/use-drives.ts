@@ -7,11 +7,15 @@ const DRIVES_LIST_KEY = ["drives"] as const;
 const DRIVE_DETAIL_KEY = (id: string) => ["drives", id] as const;
 const MY_APPLICATIONS_KEY = ["drives", "applications", "me"] as const;
 
-export function useDrives() {
+export function useDrives(statusFilter?: "open" | "closed") {
   return useQuery({
-    queryKey: DRIVES_LIST_KEY,
+    queryKey: [...DRIVES_LIST_KEY, statusFilter ?? "all"],
     queryFn: async () => {
-      const { data } = await apiClient.get<DriveSummary[]>("/drives", { params: { limit: 100 } });
+      const params: Record<string, string | number> = { limit: 100 };
+      if (statusFilter) {
+        params.status_filter = statusFilter;
+      }
+      const { data } = await apiClient.get<DriveSummary[]>("/drives", { params });
       return data;
     },
   });

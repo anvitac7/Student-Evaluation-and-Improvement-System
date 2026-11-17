@@ -43,6 +43,12 @@ export default function StudentDashboardLayout({ children }: { children: React.R
   const { user, isLoading, logout } = useAuth();
   const { data: profile } = useStudentProfile();
   const router = useRouter();
+  const pathname = usePathname();
+
+  // The assessment-taking page is intentionally a focused exam surface: it
+  // must not render the dashboard sidebar/topbar, otherwise a student can
+  // "leave" an in-progress attempt by clicking another nav item.
+  const isAssessmentAttempt = /^\/dashboard\/assessments\/[^/]+\/take(?:\/|$)/.test(pathname);
 
   useEffect(() => {
     if (!isLoading && (!user || user.role !== "student")) {
@@ -61,6 +67,10 @@ export default function StudentDashboardLayout({ children }: { children: React.R
         <div className="text-sm text-muted-foreground">Loading your dashboard…</div>
       </div>
     );
+  }
+
+  if (isAssessmentAttempt) {
+    return <div className="min-h-screen bg-background">{children}</div>;
   }
 
   return (

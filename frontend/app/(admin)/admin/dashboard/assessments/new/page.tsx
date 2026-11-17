@@ -23,6 +23,7 @@ const assessmentSchema = z.object({
   time_limit_minutes: z.coerce.number().int().min(1).max(300),
   max_violations: z.coerce.number().int().min(1).max(20),
   require_fullscreen: z.boolean(),
+  type: z.enum(["practice", "drive"]),
 });
 
 type AssessmentFormValues = z.infer<typeof assessmentSchema>;
@@ -47,6 +48,7 @@ export default function NewAssessmentPage() {
       time_limit_minutes: 30,
       max_violations: 3,
       require_fullscreen: true,
+      type: "practice",
     },
   });
 
@@ -70,6 +72,7 @@ export default function NewAssessmentPage() {
         time_limit_sec: values.time_limit_minutes * 60,
         max_violations: values.max_violations,
         require_fullscreen: values.require_fullscreen,
+        type: values.type,
       });
       toast({ title: "Assessment created", description: `${created.title} is now available to students.` });
       router.push("/admin/dashboard/assessments");
@@ -104,6 +107,31 @@ export default function NewAssessmentPage() {
                 <Label htmlFor="title">Title</Label>
                 <Input id="title" placeholder="e.g. Core CS Fundamentals" {...register("title")} />
                 {errors.title && <p className="text-sm text-destructive">{errors.title.message}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Assessment type</Label>
+                <div className="flex gap-2">
+                  {(["practice", "drive"] as const).map((option) => {
+                    const active = watch("type") === option;
+                    return (
+                      <button
+                        type="button"
+                        key={option}
+                        onClick={() => setValue("type", option, { shouldValidate: true })}
+                        className={`rounded-md border px-3 py-1.5 text-sm capitalize transition-colors ${
+                          active ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-secondary"
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Practice assessments are for student self-improvement and are excluded from drive
+                  rankings. Drive assessments are linked to a drive by a TPO and appear in drive rankings.
+                </p>
               </div>
 
               <div className="space-y-2">

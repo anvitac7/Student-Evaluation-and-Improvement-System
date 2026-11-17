@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Award, Clock, PlusCircle } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -53,7 +54,12 @@ export default function AdminAssessmentsPage() {
           {assessments.map((a) => (
             <Card key={a.id}>
               <CardHeader>
-                <CardTitle className="text-base">{a.title}</CardTitle>
+                <div className="flex items-start justify-between gap-2">
+                  <CardTitle className="text-base">{a.title}</CardTitle>
+                  <Badge variant={a.type === "drive" ? "default" : "secondary"} className="capitalize">
+                    {a.type}
+                  </Badge>
+                </div>
                 <CardDescription className="flex items-center gap-3">
                   <span className="flex items-center gap-1">
                     <Clock className="h-3.5 w-3.5" /> {formatMinutes(a.time_limit_sec)}

@@ -132,6 +132,18 @@ class Settings(BaseSettings):
                                                           # swap to a real vector DB later
                                                           # without touching callers.
 
+    # --- Coding-question execution ---------------------------------------
+    # Best-effort LOCAL subprocess runner (see code_execution_service for
+    # the security caveats). Set ENABLED=False to turn coding questions off
+    # entirely; the answer endpoint then returns a clear 503 instead of
+    # running student code.
+    CODE_EXECUTION_ENABLED: bool = True
+    CODE_EXECUTION_TIMEOUT_SECONDS: float = 3.0      # per test case
+    CODE_EXECUTION_TOTAL_TIMEOUT_SECONDS: float = 20.0  # per submission
+    CODE_EXECUTION_MAX_CODE_BYTES: int = 20000
+    CODE_EXECUTION_MAX_OUTPUT_BYTES: int = 100000
+    CODE_EXECUTION_MAX_TEST_CASES: int = 20
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -1,23 +1,24 @@
 """
 Adaptive assessment engine.
 
-Selection strategy: start at Medium difficulty. A correct answer moves the
-NEXT question one level harder; a wrong answer moves it one level easier
-(clamped at the Easy/Hard ends) — a simple, transparent adaptive strategy
-matching the project's stated requirement, rather than a more elaborate
-IRT/CAT model that would need calibrated item-difficulty parameters this
-system doesn't have yet.
+Selection strategy: start at Medium difficulty when the selected categories
+have one; otherwise fall back to the next available level (Easy first, then
+Hard) so a bank that only contains, say, easy coding questions can still be
+attempted. A correct answer moves the NEXT question one level harder; a wrong
+answer moves it one level easier (clamped at the Easy/Hard ends) — a simple,
+transparent adaptive strategy matching the project's stated requirement,
+rather than a more elaborate IRT/CAT model that would need calibrated
+item-difficulty parameters this system doesn't have yet.
 
 Grading: MCQ is exact-match against `correct_answer`, fully automatic.
-Coding is exact-match against an expected-output string — NOT real code
-execution (running untrusted student code needs a sandboxed executor,
-which is a meaningfully large and security-sensitive feature deliberately
-out of scope here; flagged as a known limitation, not silently faked).
-Descriptive questions are stored ungraded (`is_correct=None`) for manual
-review — there's no reliable free/automatic way to grade free-text answers
-without an LLM-grading pipeline, which is its own scope decision to make
-deliberately, not bolt on as an afterthought.
+Coding questions are executed against one or more stdin/stdout test cases
+(see `code_execution_service`) — a question is correct only when every test
+case passes. Descriptive questions are stored ungraded (`is_correct=None`)
+for manual review — there's no reliable free/automatic way to grade free-text
+answers without an LLM-grading pipeline, which is its own scope decision to
+make deliberately, not bolt on as an afterthought.
 """
+import asyncio
 import random
 import secrets
 from datetime import datetime, timedelta
@@ -30,10 +31,12 @@ from app.models.assessment import (
     AssessmentAttemptInDB,
     AssessmentInDB,
     AttemptStatus,
+    CodeRunSummary,
     DifficultyLevel,
     QuestionInDB,
     QuestionStudentView,
     QuestionType,
+    TestCase,
 )
 from app.models.drive import AssessmentStatus
 from app.repositories.activity_log_repository import log_activity
@@ -43,6 +46,7 @@ from app.repositories.attempt_repository import AttemptRepository
 from app.repositories.drive_repository import PlacementDriveRepository
 from app.repositories.profile_repositories import StudentRepository
 from app.repositories.question_repository import QuestionRepository
+from app.services.code_execution_service import execute_code
 from app.services.knowledge_tracing_service import KnowledgeTracingService
 
 
@@ -55,6 +59,11 @@ class AssessmentError(Exception):
 
 def to_student_view(question: QuestionInDB) -> QuestionStudentView:
     shuffled_options = random.sample(question.options, len(question.options)) if question.options else []
+    visible_cases = (
+        [case for case in question.test_cases if not case.is_hidden]
+        if question.type == QuestionType.CODING
+        else []
+    )
     return QuestionStudentView(
         id=question.id,
         difficulty=question.difficulty,
@@ -62,15 +71,31 @@ def to_student_view(question: QuestionInDB) -> QuestionStudentView:
         text=question.text,
         options=shuffled_options,
         marks=question.marks,
+        language=question.language if question.type == QuestionType.CODING else None,
+        starter_code=question.starter_code if question.type == QuestionType.CODING else None,
+        visible_test_cases=visible_cases,
     )
+
+
+def _effective_test_cases(question: QuestionInDB) -> list[TestCase]:
+    """Test cases to run for a coding question.
+
+    New questions carry an explicit list. Legacy coding questions (created
+    when grading was exact-match) only have ``correct_answer``; treat that as
+    a single empty-input case so they keep working instead of silently
+    becoming ungradable.
+    """
+    if question.test_cases:
+        return question.test_cases
+    if question.correct_answer:
+        return [TestCase(input="", expected_output=question.correct_answer, is_hidden=True, name="Expected output")]
+    return []
 
 
 def _grade(question: QuestionInDB, response: str) -> bool | None:
     if question.type == QuestionType.MCQ:
         return response.strip() == (question.correct_answer or "").strip()
-    if question.type == QuestionType.CODING:
-        return response.strip() == (question.correct_answer or "").strip()
-    return None  # descriptive — manual review
+    return None  # coding is graded by executing test cases; descriptive is manual review
 
 
 def _adjust_difficulty(current: DifficultyLevel, was_correct: bool) -> DifficultyLevel:
@@ -113,9 +138,14 @@ class AssessmentService:
         if not assessment:
             raise AssessmentError("Assessment not found.", 404)
 
-        # If application_id is supplied, validate it belongs to this student and matches drive
+        # A drive-linked assessment (drive_id set) enforces application
+        # linkage and drive rules. Practice assessments are never linked to a
+        # drive, so any application_id sent for them is ignored.
+        is_drive_assessment = assessment.drive_id is not None
         application = None
-        if application_id:
+        if is_drive_assessment:
+            if not application_id:
+                raise AssessmentError("Drive assessments require an application ID.", 400)
             application = await self.applications.get_by_id(application_id)
             if not application or application.student_id != student_id:
                 raise AssessmentError("Application not found for this student.", 404)
@@ -127,13 +157,88 @@ class AssessmentService:
             if drive.assessment_deadline and drive.assessment_deadline < datetime.utcnow():
                 raise AssessmentError("The assessment deadline for this drive has passed.", 400)
 
+        # Resume an in-progress attempt instead of creating a second one. This
+        # matters when a student navigates away or refreshes: without it, the
+        # old attempt stays in_progress forever while the new attempt silently
+        # replaces the application's attempt link.
+        existing_attempt = None
+        if application and application.assessment_attempt_id:
+            existing_attempt = await self.attempts.get_by_id(application.assessment_attempt_id)
+        if not existing_attempt:
+            in_progress = await self.attempts.find_many(
+                {
+                    "assessment_id": assessment.id,
+                    "student_id": student_id,
+                    "status": AttemptStatus.IN_PROGRESS.value,
+                },
+                limit=1,
+                sort=[("started_at", -1)],
+            )
+            existing_attempt = in_progress[0] if in_progress else None
+
+        if existing_attempt and existing_attempt.status == AttemptStatus.IN_PROGRESS:
+            deadline = existing_attempt.started_at + timedelta(seconds=assessment.time_limit_sec)
+            if datetime.utcnow() <= deadline:
+                current_question = (
+                    await self.questions.get_by_id(existing_attempt.current_question_id)
+                    if existing_attempt.current_question_id
+                    else None
+                )
+                if current_question:
+                    if application and application.assessment_attempt_id != existing_attempt.id:
+                        await self.applications.update_by_id(
+                            application.id,
+                            {
+                                "assessment_attempt_id": existing_attempt.id,
+                                "assessment_status": AssessmentStatus.PENDING.value,
+                            },
+                        )
+                    await log_activity(
+                        self.db,
+                        student_user_id,
+                        action="attempt_resumed",
+                        entity="assessment_attempt",
+                        entity_id=existing_attempt.id,
+                        metadata={
+                            "assessment_id": assessment_id,
+                            "application_id": application_id,
+                            "assessment_type": assessment.type.value,
+                        },
+                        ip_address=ip_address,
+                    )
+                    return existing_attempt, current_question
+            # Expired, or the attempt has no current question: close it out
+            # before starting a fresh one so it cannot linger forever.
+            await self._finalize_attempt(existing_attempt)
+
+        first_difficulty = DifficultyLevel.MEDIUM
         first_question = await self.questions.get_random_unused(
             category_ids=assessment.category_ids,
-            difficulty=DifficultyLevel.MEDIUM.value,
+            difficulty=first_difficulty.value,
             exclude_ids=[],
         )
         if not first_question:
-            raise AssessmentError("No questions available for this assessment yet.", 422)
+            # Question banks don't have to contain a medium-difficulty item in
+            # every category (the common case is a category with only easy
+            # questions, e.g. a single coding problem). Fall back to the other
+            # levels instead of refusing to start the assessment.
+            for fallback_difficulty in DIFFICULTY_ORDER:
+                if fallback_difficulty == first_difficulty:
+                    continue
+                first_question = await self.questions.get_random_unused(
+                    category_ids=assessment.category_ids,
+                    difficulty=fallback_difficulty.value,
+                    exclude_ids=[],
+                )
+                if first_question:
+                    first_difficulty = fallback_difficulty
+                    break
+        if not first_question:
+            raise AssessmentError(
+                "No questions available for this assessment yet. "
+                "Add at least one question to the categories selected for this assessment.",
+                422,
+            )
 
         attempt = await self.attempts.create(
             {
@@ -142,7 +247,7 @@ class AssessmentService:
                 "session_token": secrets.token_urlsafe(24),
                 "asked_question_ids": [first_question.id],
                 "current_question_id": first_question.id,
-                "current_difficulty": DifficultyLevel.MEDIUM.value,
+                "current_difficulty": first_difficulty.value,
                 "answers": [],
                 "violations": [],
                 "status": AttemptStatus.IN_PROGRESS.value,
@@ -153,7 +258,7 @@ class AssessmentService:
             }
         )
 
-        # Link attempt to application if provided
+        # Link attempt to application only for drive assessments
         if application:
             await self.applications.update_by_id(
                 application.id,
@@ -169,7 +274,11 @@ class AssessmentService:
             action="attempt_started",
             entity="assessment_attempt",
             entity_id=attempt.id,
-            metadata={"assessment_id": assessment_id, "application_id": application_id},
+            metadata={
+                "assessment_id": assessment_id,
+                "application_id": application_id,
+                "assessment_type": assessment.type.value,
+            },
             ip_address=ip_address,
         )
         return attempt, first_question
@@ -220,6 +329,7 @@ class AssessmentService:
         linked_apps = await self.applications.find_many(
             {"assessment_attempt_id": updated_attempt.id}, limit=100
         )
+
         for app in linked_apps:
             drive = await self.drives.get_by_id(app.drive_id)
             pass_status = AssessmentStatus.PASSED.value
@@ -235,6 +345,10 @@ class AssessmentService:
                 },
             )
 
+        # For practice assessments, we still update knowledge tracing but don't
+        # link to applications (already handled by not setting assessment_attempt_id
+        # for practice assessments in start_attempt)
+
         return updated_attempt
 
     async def submit_answer(
@@ -245,7 +359,7 @@ class AssessmentService:
         question_id: str,
         response: str,
         time_taken_sec: float | None,
-    ) -> tuple[AssessmentAttemptInDB, QuestionInDB | None, bool | None, int]:
+    ) -> tuple[AssessmentAttemptInDB, QuestionInDB | None, bool | None, int, CodeRunSummary | None]:
         student_id = await self._resolve_student_id(student_user_id)
         attempt, assessment = await self._require_in_progress_attempt(student_id, attempt_id, session_token)
 
@@ -256,7 +370,22 @@ class AssessmentService:
         if not question:
             raise AssessmentError("Question not found.", 404)
 
-        is_correct = _grade(question, response)
+        code_result: CodeRunSummary | None = None
+        if question.type == QuestionType.CODING:
+            test_cases = _effective_test_cases(question)
+            if not test_cases:
+                raise AssessmentError("This coding question has no test cases configured.", 500)
+            # Running student code is blocking, so keep it off the event loop.
+            code_result = await asyncio.to_thread(execute_code, question.language, response, test_cases)
+            if code_result.status in {"disabled", "unsupported_language", "error"}:
+                # These are server configuration problems, not wrong answers.
+                raise AssessmentError(
+                    code_result.error or "Code execution is unavailable right now.", 503
+                )
+            is_correct = code_result.all_passed
+        else:
+            is_correct = _grade(question, response)
+
         marks_awarded = question.marks if is_correct else 0
 
         if time_taken_sec is not None and time_taken_sec < 3.0:
@@ -280,6 +409,8 @@ class AssessmentService:
             "marks_awarded": marks_awarded,
             "time_taken_sec": time_taken_sec,
             "difficulty_at_time": question.difficulty.value,
+            "question_type": question.type.value,
+            "code_result": code_result.model_dump() if code_result else None,
         }
         new_answers = [a.model_dump(mode="json") for a in attempt.answers] + [answer_record]
 
@@ -319,7 +450,56 @@ class AssessmentService:
             refreshed = await self.attempts.get_by_id(attempt.id)
             updated_attempt = await self._finalize_attempt(refreshed)
 
-        return updated_attempt, next_question, is_correct, marks_awarded
+        return updated_attempt, next_question, is_correct, marks_awarded, code_result
+
+    async def finish_attempt(
+        self,
+        student_user_id: str,
+        attempt_id: str,
+        session_token: str,
+    ) -> AssessmentAttemptInDB:
+        """Finish an in-progress attempt early.
+
+        The score is computed from the answers already submitted. This keeps
+        an early exit (or an expired client timer) from leaving an orphaned
+        ``in_progress`` attempt that never appears in results or rankings.
+        """
+        student_id = await self._resolve_student_id(student_user_id)
+        attempt, _ = await self._require_in_progress_attempt(
+            student_id, attempt_id, session_token
+        )
+        return await self._finalize_attempt(attempt)
+
+    async def run_code_sample(
+        self,
+        student_user_id: str,
+        attempt_id: str,
+        session_token: str,
+        question_id: str,
+        code: str,
+    ) -> CodeRunSummary:
+        """Run a student's code against only the *visible* sample test cases.
+
+        This is a convenience for iteration before submitting. Hidden test
+        cases are never run here, so the endpoint cannot be used to probe the
+        hidden expectations.
+        """
+        student_id = await self._resolve_student_id(student_user_id)
+        attempt, _ = await self._require_in_progress_attempt(student_id, attempt_id, session_token)
+
+        if attempt.current_question_id != question_id:
+            raise AssessmentError("This is not the current question for this attempt.", 400)
+
+        question = await self.questions.get_by_id(question_id)
+        if not question:
+            raise AssessmentError("Question not found.", 404)
+        if question.type != QuestionType.CODING:
+            raise AssessmentError("Only coding questions can be run.", 400)
+
+        visible_cases = [case for case in _effective_test_cases(question) if not case.is_hidden]
+        return await asyncio.to_thread(
+            execute_code, question.language, code, visible_cases, only_visible=True
+        )
 
     async def get_results(self, student_user_id: str, attempt_id: str) -> AssessmentAttemptInDB:
         student_id = await self._resolve_student_id(student_user_id)

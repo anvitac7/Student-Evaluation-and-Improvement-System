@@ -29,6 +29,7 @@ from app.routers import (
     jd_explanation,
     knowledge_admin,
     matching,
+    market_analytics,
     observability,
     questions,
     resumes,
@@ -50,6 +51,12 @@ configure_logging()
 async def lifespan(app: FastAPI):
     # --- Startup ---
     validate_production_config(settings)
+    if settings.CODE_EXECUTION_ENABLED and settings.APP_ENV == "production":
+        logger.warning(
+            "CODE_EXECUTION_ENABLED is on in production. The local code runner is NOT a "
+            "hardened sandbox — use a disposable container or a dedicated judge service "
+            "before exposing coding submissions to real users."
+        )
     await connect_to_mongo()
     await ensure_indexes()
     logger.info("%s started in '%s' mode.", settings.APP_NAME, settings.APP_ENV)
@@ -70,10 +77,6 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Outermost middleware, so every other layer (CORS, rate limiting, the
-    # global exception handler) executes inside a bound request id.
-    app.add_middleware(RequestIdMiddleware)
-
     # --- Rate limiting ---
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -86,6 +89,14 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Request-id middleware. Added LAST on purpose: Starlette's
+    # add_middleware PREPENDS to the stack, so the most recently added
+    # middleware ends up outermost. Registering this before CORSMiddleware
+    # left CORS outside it, meaning preflight/OPTIONS requests short-circuited
+    # by CORSMiddleware never got a correlation id — exactly the traffic you
+    # most want to trace when a browser reports a CORS failure.
+    app.add_middleware(RequestIdMiddleware)
 
     # --- Global exception handler (never leak stack traces to clients) ---
     @app.exception_handler(Exception)
@@ -105,6 +116,11 @@ def create_app() -> FastAPI:
     app.include_router(questions.router, prefix=f"{settings.API_V1_PREFIX}/questions", tags=["Question Bank"])
     app.include_router(assessments.router, prefix=f"{settings.API_V1_PREFIX}/assessments", tags=["Assessments"])
     app.include_router(analytics.router, prefix=f"{settings.API_V1_PREFIX}/analytics", tags=["Analytics"])
+    app.include_router(
+        market_analytics.router,
+        prefix=f"{settings.API_V1_PREFIX}/analytics",
+        tags=["Market Analytics"],
+    )
     app.include_router(matching.router, prefix=f"{settings.API_V1_PREFIX}/matching", tags=["Matching"])
     app.include_router(applications.router, prefix=f"{settings.API_V1_PREFIX}/applications", tags=["Applications"])
     app.include_router(gap_analysis.router, prefix=settings.API_V1_PREFIX)

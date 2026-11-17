@@ -1,6 +1,8 @@
 export type DifficultyLevel = "easy" | "medium" | "hard";
 export type QuestionType = "mcq" | "coding" | "descriptive";
 export type AttemptStatus = "in_progress" | "submitted";
+export type AssessmentType = "practice" | "drive";
+export type CodingLanguage = "python" | "javascript";
 
 export interface AntiCheatConfig {
   max_violations?: number;
@@ -15,6 +17,7 @@ export interface AssessmentCreateRequest {
   time_limit_sec: number;
   max_violations: number;
   require_fullscreen: boolean;
+  type?: AssessmentType;
 }
 
 export interface AssessmentResponse {
@@ -24,6 +27,8 @@ export interface AssessmentResponse {
   question_pool_size: number;
   time_limit_sec: number;
   anti_cheat_config: AntiCheatConfig;
+  type: AssessmentType;
+  drive_id: string | null;
 }
 
 export interface QuestionStudentView {
@@ -33,12 +38,47 @@ export interface QuestionStudentView {
   text: string;
   options: string[];
   marks: number;
+  /** Coding-only. Only non-hidden test cases are exposed as samples. */
+  language: CodingLanguage | null;
+  starter_code: string | null;
+  visible_test_cases: QuestionTestCase[];
+}
+
+/** One stdin/stdout test case attached to a coding question (admin view). */
+export interface QuestionTestCase {
+  name?: string | null;
+  input: string;
+  expected_output: string;
+  is_hidden: boolean;
+}
+
+export interface CodeTestCaseResult {
+  index: number;
+  name: string | null;
+  is_hidden: boolean;
+  passed: boolean;
+  status: string;
+  input: string | null;
+  expected_output: string | null;
+  actual_output: string | null;
+  stderr: string | null;
+  runtime_ms: number | null;
+}
+
+export interface CodeRunSummary {
+  passed: number;
+  total: number;
+  all_passed: boolean;
+  status: string;
+  results: CodeTestCaseResult[];
+  error: string | null;
 }
 
 export interface StartAttemptResponse {
   attempt_id: string;
   session_token: string;
   time_limit_sec: number;
+  time_remaining_sec: number;
   anti_cheat_config: AntiCheatConfig;
   next_question: QuestionStudentView | null;
 }
@@ -48,6 +88,16 @@ export interface SubmitAnswerResponse {
   marks_awarded: number;
   next_question: QuestionStudentView | null;
   attempt_status: AttemptStatus;
+  code_result: CodeRunSummary | null;
+}
+
+export interface FinishAttemptResponse {
+  attempt_id: string;
+  status: AttemptStatus;
+  questions_answered: number;
+  total_marks: number;
+  max_possible_marks: number;
+  submitted_at: string | null;
 }
 
 export interface ViolationReportResponse {
@@ -55,6 +105,17 @@ export interface ViolationReportResponse {
   max_violations: number;
   attempt_status: AttemptStatus;
   auto_submitted: boolean;
+}
+
+export interface AttemptAnswerDetail {
+  question_id: string;
+  type: QuestionType | null;
+  text: string;
+  response: string;
+  is_correct: boolean | null;
+  marks_awarded: number;
+  max_marks: number;
+  code_result: CodeRunSummary | null;
 }
 
 export interface AttemptResultResponse {
@@ -65,6 +126,7 @@ export interface AttemptResultResponse {
   questions_answered: number;
   started_at: string;
   submitted_at: string | null;
+  answers: AttemptAnswerDetail[];
 }
 
 export interface KnowledgeStateResponse {

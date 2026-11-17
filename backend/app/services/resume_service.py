@@ -2,6 +2,7 @@ import hashlib
 import uuid
 from datetime import datetime
 
+from fastapi import UploadFile
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import get_settings
@@ -15,6 +16,9 @@ settings = get_settings()
 
 PDF_MAGIC_BYTES = b"%PDF"
 MAX_RESUME_SIZE_BYTES = settings.MAX_RESUME_SIZE_MB * 1024 * 1024
+
+# Read uploads in bounded blocks so peak memory is O(cap), not O(file size).
+_UPLOAD_READ_BLOCK_BYTES = 1024 * 1024
 
 
 class ResumeError(Exception):
@@ -103,6 +107,54 @@ class ResumeService:
                 logging.getLogger(__name__).warning("Profile auto-population encountered an issue: %s", exc, exc_info=True)
 
         return resume
+
+    @staticmethod
+    async def read_upload_capped(file: UploadFile) -> bytes:
+        """Read an upload, refusing to buffer more than the configured cap.
+
+        Why this exists: the route used to call `await file.read()` with no
+        guard, so the ENTIRE request body was materialised in memory before
+        anything checked its size. MAX_RESUME_SIZE_MB was 5MB, but nothing
+        stopped a client declaring (and sending) 2GB — the server would try
+        to allocate it, and a handful of concurrent uploads is enough to
+        exhaust memory.
+
+        Reads in bounded blocks and aborts as soon as the running total
+        exceeds the cap, so peak memory is O(cap) rather than O(file size).
+        """
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            block = await file.read(_UPLOAD_READ_BLOCK_BYTES)
+            if not block:
+                break
+            total += len(block)
+            if total > MAX_RESUME_SIZE_BYTES:
+                raise ResumeError(
+                    f"File exceeds the {settings.MAX_RESUME_SIZE_MB}MB size limit.", 413
+                )
+            chunks.append(block)
+        return b"".join(chunks)
+
+    @staticmethod
+    def reject_oversized_content_length(content_length: str | None) -> None:
+        """Cheap pre-flight check on the declared Content-Length.
+
+        Purely an optimisation and defence in depth: it rejects an oversized
+        upload before a single body byte is read. A client can lie about (or
+        omit) Content-Length with chunked encoding, which is exactly why
+        read_upload_capped() is still the real enforcement.
+        """
+        if not content_length:
+            return
+        try:
+            declared = int(content_length)
+        except (TypeError, ValueError):
+            return  # unparseable header; the streaming cap still applies
+        if declared > MAX_RESUME_SIZE_BYTES:
+            raise ResumeError(
+                f"File exceeds the {settings.MAX_RESUME_SIZE_MB}MB size limit.", 413
+            )
 
     @staticmethod
     def _validate_file(filename: str, file_bytes: bytes) -> None:

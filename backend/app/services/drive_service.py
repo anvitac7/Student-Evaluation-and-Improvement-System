@@ -13,6 +13,7 @@ from app.models.drive import (
     PlacementDriveInDB,
     VALID_STATUS_TRANSITIONS,
 )
+from app.models.assessment import AssessmentType
 from app.models.user import StudentInDB
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.assessment_repository import AssessmentRepository
@@ -92,9 +93,11 @@ class DriveService:
             }
         )
 
-        # Link assessment back to drive
+        # Link assessment back to drive and mark it as a drive assessment
         if req_assessment_id:
-            await self.assessments.update_by_id(req_assessment_id, {"drive_id": drive.id})
+            await self.assessments.update_by_id(
+                req_assessment_id, {"drive_id": drive.id, "type": AssessmentType.DRIVE.value}
+            )
 
         return drive
 
@@ -124,7 +127,9 @@ class DriveService:
                 if not assessment:
                     raise DriveError("Selected required assessment not found.", 404)
                 update_data["required_assessment_id"] = assessment.id
-                await self.assessments.update_by_id(assessment.id, {"drive_id": drive.id})
+                await self.assessments.update_by_id(
+                    assessment.id, {"drive_id": drive.id, "type": AssessmentType.DRIVE.value}
+                )
             else:
                 update_data["required_assessment_id"] = None
 

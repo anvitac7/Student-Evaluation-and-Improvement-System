@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -7,8 +9,15 @@ from app.models.assessment import (
     DIFFICULTY_MARKS,
     AssessmentCreateRequest,
     AssessmentResponse,
+    AssessmentType,
+    AttemptAnswerDetail,
     AttemptResultResponse,
+    CodeRunSummary,
+    FinishAttemptRequest,
+    FinishAttemptResponse,
     KnowledgeStateResponse,
+    RunCodeRequest,
+    RunCodeResponse,
     StartAttemptRequest,
     StartAttemptResponse,
     SubmitAnswerRequest,
@@ -18,6 +27,7 @@ from app.models.assessment import (
 )
 from app.repositories.assessment_repository import AssessmentRepository
 from app.repositories.profile_repositories import StudentRepository
+from app.repositories.question_repository import QuestionRepository
 from app.services.assessment_service import AssessmentError, AssessmentService, to_student_view
 from app.services.knowledge_tracing_service import KnowledgeTracingService
 
@@ -30,6 +40,8 @@ async def create_assessment(
     current_user: CurrentUser = Depends(require_role("admin")),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
+    # Validate drive assessment requires a drive_id (would be set by TPO when linking)
+    # For now, we allow creating drive assessments without drive_id, but they must be linked later
     anti_cheat_config = {
         "max_violations": payload.max_violations,
         "require_fullscreen": payload.require_fullscreen,
@@ -41,6 +53,7 @@ async def create_assessment(
             "question_pool_size": payload.question_pool_size,
             "time_limit_sec": payload.time_limit_sec,
             "anti_cheat_config": anti_cheat_config,
+            "type": payload.type.value,
             "created_by": current_user.id,
         }
     )
@@ -51,15 +64,21 @@ async def create_assessment(
         question_pool_size=assessment.question_pool_size,
         time_limit_sec=assessment.time_limit_sec,
         anti_cheat_config=assessment.anti_cheat_config,
+        type=assessment.type,
+        drive_id=assessment.drive_id,
     )
 
 
 @router.get("", response_model=list[AssessmentResponse])
 async def list_assessments(
+    type_filter: AssessmentType | None = None,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
-    assessments = await AssessmentRepository(db).find_many({}, limit=200)
+    query: dict = {}
+    if type_filter:
+        query["type"] = type_filter.value
+    assessments = await AssessmentRepository(db).find_many(query, limit=200)
     return [
         AssessmentResponse(
             id=a.id,
@@ -68,6 +87,8 @@ async def list_assessments(
             question_pool_size=a.question_pool_size,
             time_limit_sec=a.time_limit_sec,
             anti_cheat_config=a.anti_cheat_config,
+            type=a.type,
+            drive_id=a.drive_id,
         )
         for a in assessments
     ]
@@ -151,10 +172,13 @@ async def start_assessment(
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     assessment = await service.assessments.get_by_id(assessment_id)
+    elapsed_sec = max(0.0, (datetime.utcnow() - attempt.started_at).total_seconds())
+    time_remaining_sec = max(0, int(assessment.time_limit_sec - elapsed_sec))
     return StartAttemptResponse(
         attempt_id=attempt.id,
         session_token=attempt.session_token,
         time_limit_sec=assessment.time_limit_sec,
+        time_remaining_sec=time_remaining_sec,
         anti_cheat_config=assessment.anti_cheat_config,
         next_question=to_student_view(first_question) if first_question else None,
     )
@@ -169,7 +193,7 @@ async def submit_answer(
 ):
     service = AssessmentService(db)
     try:
-        attempt, next_question, is_correct, marks_awarded = await service.submit_answer(
+        attempt, next_question, is_correct, marks_awarded, code_result = await service.submit_answer(
             current_user.id,
             attempt_id,
             payload.session_token,
@@ -185,7 +209,60 @@ async def submit_answer(
         marks_awarded=marks_awarded,
         next_question=to_student_view(next_question) if next_question else None,
         attempt_status=attempt.status,
+        code_result=code_result,
     )
+
+
+@router.post("/attempts/{attempt_id}/finish", response_model=FinishAttemptResponse)
+async def finish_attempt(
+    attempt_id: str,
+    payload: FinishAttemptRequest,
+    current_user: CurrentUser = Depends(require_role("student")),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """Finalize an in-progress attempt using the answers submitted so far."""
+    service = AssessmentService(db)
+    try:
+        attempt = await service.finish_attempt(
+            current_user.id,
+            attempt_id,
+            payload.session_token,
+        )
+    except AssessmentError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    total_marks = sum(a.marks_awarded for a in attempt.answers)
+    max_possible_marks = sum(DIFFICULTY_MARKS[a.difficulty_at_time] for a in attempt.answers)
+    return FinishAttemptResponse(
+        attempt_id=attempt.id,
+        status=attempt.status,
+        questions_answered=len(attempt.answers),
+        total_marks=total_marks,
+        max_possible_marks=max_possible_marks,
+        submitted_at=attempt.submitted_at,
+    )
+
+
+@router.post("/attempts/{attempt_id}/run-code", response_model=RunCodeResponse)
+async def run_code(
+    attempt_id: str,
+    payload: RunCodeRequest,
+    current_user: CurrentUser = Depends(require_role("student")),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """Run the current coding question against its visible sample test cases."""
+    service = AssessmentService(db)
+    try:
+        code_result = await service.run_code_sample(
+            current_user.id,
+            attempt_id,
+            payload.session_token,
+            payload.question_id,
+            payload.code,
+        )
+    except AssessmentError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return RunCodeResponse(code_result=code_result)
 
 
 @router.post("/attempts/{attempt_id}/violation", response_model=ViolationReportResponse)
@@ -245,6 +322,24 @@ async def get_attempt_results(
     # which is 0 for wrong answers and so can't represent "possible" marks.
     max_possible_marks = sum(DIFFICULTY_MARKS[a.difficulty_at_time] for a in attempt.answers)
 
+    question_repo = QuestionRepository(db)
+    answer_details: list[AttemptAnswerDetail] = []
+    for answer in attempt.answers:
+        question = await question_repo.get_by_id(answer.question_id)
+        code_result = CodeRunSummary(**answer.code_result) if answer.code_result else None
+        answer_details.append(
+            AttemptAnswerDetail(
+                question_id=answer.question_id,
+                type=answer.question_type or (question.type if question else None),
+                text=question.text if question else "(question no longer available)",
+                response=answer.response,
+                is_correct=answer.is_correct,
+                marks_awarded=answer.marks_awarded,
+                max_marks=DIFFICULTY_MARKS[answer.difficulty_at_time],
+                code_result=code_result,
+            )
+        )
+
     return AttemptResultResponse(
         attempt_id=attempt.id,
         status=attempt.status,
@@ -253,4 +348,5 @@ async def get_attempt_results(
         questions_answered=len(attempt.answers),
         started_at=attempt.started_at,
         submitted_at=attempt.submitted_at,
+        answers=answer_details,
     )

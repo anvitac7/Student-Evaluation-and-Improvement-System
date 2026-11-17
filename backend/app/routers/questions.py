@@ -26,6 +26,9 @@ def _to_admin_response(question: QuestionInDB) -> QuestionAdminResponse:
         text=question.text,
         options=question.options,
         correct_answer=question.correct_answer,
+        language=question.language,
+        starter_code=question.starter_code,
+        test_cases=question.test_cases,
         marks=question.marks,
         company_tags=question.company_tags,
     )
