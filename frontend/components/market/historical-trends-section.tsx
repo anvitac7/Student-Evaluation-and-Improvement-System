@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatSignedGrowth } from "@/lib/market-insights";
@@ -162,23 +162,11 @@ export function HistoricalTrendsSection({
       !selected.some((selectedTrend) => selectedTrend.slug === trend.slug)
   );
   const canAddMore = selected.length < MAX_COMPARED_SKILLS;
-  const latestComparable =
-    meta?.comparison_comparable && meta?.current_period && meta?.previous_period
-      ? `${meta.current_period.label} vs ${meta.previous_period.label}`
-      : null;
 
   return (
     <Card>
       <CardHeader className="gap-2 sm:flex-row sm:items-start sm:justify-between sm:space-y-0">
-        <div className="space-y-1.5">
-          <CardTitle className="text-base">Skill demand over time</CardTitle>
-          <CardDescription>
-            Share of each year&apos;s filtered postings requiring the skill.
-            {latestComparable
-              ? ` Latest comparable window: ${latestComparable}.`
-              : " No comparable previous period under the current filters."}
-          </CardDescription>
-        </div>
+        <CardTitle className="text-base">Skill demand over time</CardTitle>
         <div className="w-full sm:w-64">
           <Select
             value=""
@@ -243,11 +231,6 @@ export function HistoricalTrendsSection({
               Reset selection
             </Button>
           )}
-          {selectedSlugs.length === 0 && selected.length > 0 && (
-            <span className="text-xs text-muted-foreground">
-              Pick more skills above to compare them (up to {MAX_COMPARED_SKILLS}).
-            </span>
-          )}
         </div>
 
         <div className="overflow-hidden">
@@ -285,11 +268,6 @@ export function HistoricalTrendsSection({
           ) && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <Badge variant="warning">{meta.comparison_period} only</Badge>
-              <span>
-                {meta.current_period.label} is a partial year — its values are not
-                full-year totals and are compared only with the same window of the
-                previous year.
-              </span>
             </div>
           )}
       </CardContent>

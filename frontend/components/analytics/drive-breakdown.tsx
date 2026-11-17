@@ -418,9 +418,6 @@ export function DriveBreakdown({ drives }: { drives: DriveFunnel[] }) {
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Per-drive breakdown</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Expand a drive to see its rankings, applied students and test participants.
-        </p>
       </CardHeader>
       <CardContent className="space-y-2">
         {drives.length === 0 ? (

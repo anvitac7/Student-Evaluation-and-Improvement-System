@@ -45,19 +45,7 @@ export default function MarketInsightsPage() {
   return (
     <div className="space-y-6">
       {/* --- Header --------------------------------------------------------- */}
-      <div className="space-y-1.5">
-        <h1 className="font-display text-2xl font-semibold">Market Insights</h1>
-        <p className="text-sm text-muted-foreground">
-          A market-wide view of trending skills and company requirements.
-        </p>
-        {meta?.current_period && (
-          <p className="text-xs text-muted-foreground">
-            {meta.comparison_comparable && meta.previous_period
-              ? `${meta.current_period.label} compared with ${meta.previous_period.label}.`
-              : `${meta.current_period.label} — no comparable previous period, so growth values are unavailable.`}
-          </p>
-        )}
-      </div>
+      <h1 className="font-display text-2xl font-semibold">Market Insights</h1>
 
       {/* --- Filters (always interactive, even while data loads) ------------- */}
       <MarketFilterPanel

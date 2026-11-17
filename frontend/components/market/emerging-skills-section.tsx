@@ -14,7 +14,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -152,10 +152,7 @@ function TrajectoryChart({ candidate, meta }: { candidate: EmergingCandidate; me
         </ResponsiveContainer>
       </div>
       {showPartialNote && (
-        <p className="text-xs text-muted-foreground">
-          {meta!.comparison_period} only — the latest year is partial, so its values are
-          compared only with the same window of the previous year.
-        </p>
+        <Badge variant="warning">{meta!.comparison_period} only</Badge>
       )}
     </div>
   );
@@ -210,9 +207,6 @@ export function EmergingSkillsSection({
         <CardTitle className="flex items-center gap-2 text-base">
           <Sparkles className="h-4 w-4" /> Emerging &amp; rising skills
         </CardTitle>
-        <CardDescription>
-          Skills with positive comparable growth, built from the backend&apos;s trend data.
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {isLoading || !emerging || !trending ? (
@@ -338,12 +332,6 @@ export function EmergingSkillsSection({
                 </li>
               ))}
             </ul>
-            <p className="text-xs text-muted-foreground">
-              Classification rules: newly emerging = backend emerging list; fast growing =
-              latest comparable growth ≥ +25%; consistently growing = positive growth in every
-              comparable period (≥ 2); recently accelerating = latest comparable growth above
-              the preceding one. Values come from the API; null growth is never read as zero.
-            </p>
           </>
         )}
       </CardContent>

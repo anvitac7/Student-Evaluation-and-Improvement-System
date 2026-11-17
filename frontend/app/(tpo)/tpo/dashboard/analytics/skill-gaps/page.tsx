@@ -50,10 +50,6 @@ export default function SkillGapAnalysisPage() {
     return data.skills.find((skill) => skill.skill_id === selectedSkillId) ?? null;
   }, [data, selectedSkillId]);
 
-  const evidenceCoverage = data
-    ? `${data.summary.students_with_assessment_evidence} of ${data.summary.student_population} students have graded evidence on the analyzed skills; ${data.summary.students_with_reported_skills} report skills via profile/resume.`
-    : null;
-
   if (isLoading && !data) {
     return (
       <div className="space-y-4">
@@ -86,7 +82,7 @@ export default function SkillGapAnalysisPage() {
   if (data.skills.length === 0) {
     return (
       <div className="space-y-4">
-        <PageIntro meta={data.meta.notes[0]} />
+        <h1 className="font-display text-2xl font-semibold">Skill Gap Analysis</h1>
         <SkillGapFilterPanel
           active={filters}
           onApply={setFilters}
@@ -106,22 +102,9 @@ export default function SkillGapAnalysisPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold">Skill Gap Analysis</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Industry demand vs what students can actually demonstrate. Assessment
-          evidence uses SUBMITTED attempts on placement drives&apos; required
-          assessments only (practice assessments never count); self-reported
-          skills from profiles and resumes are shown separately and never
-          treated as proficiency.
-        </p>
-      </div>
+      <h1 className="font-display text-2xl font-semibold">Skill Gap Analysis</h1>
 
       <SkillGapSummaryCards summary={data.summary} />
-
-      {evidenceCoverage && (
-        <p className="text-xs text-muted-foreground">{evidenceCoverage} Classification thresholds: demonstrated ≥ {data.meta.thresholds.demonstrated_min_pct}%, developing ≥ {data.meta.thresholds.developing_min_pct}%, with at least {data.meta.thresholds.min_graded_answers} graded answers (below that, evidence is insufficient).</p>
-      )}
 
       <SkillGapFilterPanel
         active={filters}
@@ -161,41 +144,16 @@ export default function SkillGapAnalysisPage() {
         <UnmappedCard
           title="Unmapped assessment skill tags"
           items={data.meta.unmapped_assessment_skill_tags}
-          description="Question skill tags with no entry in the market skill catalog — their evidence is excluded from the gap rows (reported here rather than silently dropped)."
+          description="Question skill tags with no entry in the market skill catalog — excluded from the gap rows."
         />
       )}
       {data.meta.unmapped_self_reported_skills.length > 0 && (
         <UnmappedCard
           title="Unmapped self-reported skills"
           items={data.meta.unmapped_self_reported_skills}
-          description="Profile/resume skills that do not match any catalog or demanded skill — they cannot be compared against industry demand."
+          description="Profile/resume skills matching no demanded skill."
         />
       )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Dataset &amp; methodology notes</CardTitle>
-          <CardDescription>
-            {data.meta.market.is_mock_data ? data.meta.market.disclaimer : null}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-            {data.meta.notes.map((note) => (
-              <li key={note}>{note}</li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function PageIntro({ meta }: { meta?: string }) {
-  return (
-    <div>
-      <h1 className="text-2xl font-semibold">Skill Gap Analysis</h1>
-      {meta && <p className="mt-1 text-sm text-muted-foreground">{meta}</p>}
     </div>
   );
 }

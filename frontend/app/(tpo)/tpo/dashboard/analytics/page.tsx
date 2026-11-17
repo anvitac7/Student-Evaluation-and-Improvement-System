@@ -4,7 +4,7 @@ import { AlertCircle, BarChart3, Briefcase, Percent, Users } from "lucide-react"
 
 import { DriveBreakdown } from "@/components/analytics/drive-breakdown";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatCard } from "@/components/shared/stat-card";
@@ -43,11 +43,8 @@ export default function TpoAnalyticsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-semibold">Analytics</h1>
-        <p className="text-sm text-muted-foreground">How your drives are performing.</p>
-      </div>
+    <div className="space-y-4">
+      <h1 className="font-display text-2xl font-semibold">Analytics</h1>
 
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard label="Total drives" value={data.total_drives} icon={Briefcase} />
@@ -58,7 +55,6 @@ export default function TpoAnalyticsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Application funnel</CardTitle>
-          <CardDescription>Across all your drives combined.</CardDescription>
         </CardHeader>
         <CardContent>
           {data.total_applications === 0 ? (

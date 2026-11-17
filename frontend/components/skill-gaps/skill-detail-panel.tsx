@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, Info, Layers, X } from "lucide-react";
+import { Building2, Layers, X } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -62,13 +62,11 @@ export function SkillDetailPanel({
               </Badge>
             </CardTitle>
             <CardDescription>
-              {skill.posting_count} posting{skill.posting_count === 1 ? "" : "s"} require
-              this skill ({skill.demand_pct}% of the filtered postings).{" "}
-              {skill.growth_comparable
-                ? skill.latest_growth_pct != null
-                  ? `Comparable-period demand growth: ${skill.latest_growth_pct > 0 ? "+" : ""}${skill.latest_growth_pct}%.`
-                  : "No comparable previous-period demand to compare against."
-                : "No comparable historical period for growth."}
+              {skill.posting_count} posting{skill.posting_count === 1 ? "" : "s"} ·{" "}
+              {skill.demand_pct}% of filtered postings · growth{" "}
+              {skill.growth_comparable && skill.latest_growth_pct != null
+                ? `${skill.latest_growth_pct > 0 ? "+" : ""}${skill.latest_growth_pct}%`
+                : "N/A"}
             </CardDescription>
           </div>
           <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close skill detail">
@@ -116,8 +114,7 @@ export function SkillDetailPanel({
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             {skill.students_no_evidence} student
-            {skill.students_no_evidence === 1 ? "" : "s"} have no evidence for this
-            skill at all (not reported, no graded assessment evidence).
+            {skill.students_no_evidence === 1 ? "" : "s"} with no evidence for this skill.
           </p>
         </div>
 
@@ -224,11 +221,6 @@ function CompanyDemandList({
           ))}
         </ul>
       )}
-      <p className="mt-1.5 flex items-start gap-1 text-xs text-muted-foreground">
-        <Info className="mt-0.5 h-3 w-3 shrink-0" />
-        Percentages are the entity&apos;s own postings requiring the skill
-        (top {rows.length > 0 ? rows.length : 0} shown).
-      </p>
     </div>
   );
 }

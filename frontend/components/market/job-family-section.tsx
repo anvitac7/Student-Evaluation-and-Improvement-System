@@ -12,7 +12,7 @@ import {
 } from "recharts";
 
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { JobFamilyMarketAnalytics } from "@/types/market-analytics";
@@ -78,11 +78,6 @@ export function JobFamilySection({
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Job family breakdown</CardTitle>
-        <CardDescription>
-          How the filtered postings distribute across job families, with each family&apos;s
-          most-demanded skills. Use the comparison section below to inspect a family&apos;s
-          full skill list, growth and technical/soft mix.
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <ResponsiveContainer width="100%" height={Math.max(220, families.length * 32 + 40)}>

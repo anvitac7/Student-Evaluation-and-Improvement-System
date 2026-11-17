@@ -2,10 +2,9 @@
 
 import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Info } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { SkillGapEntry } from "@/types/skill-gaps";
 
 /**
@@ -35,16 +34,6 @@ export function DemandProficiencyChart({ skills }: { skills: SkillGapEntry[] }) 
         <CardTitle className="flex items-center gap-2 text-base">
           Demand vs student proficiency
         </CardTitle>
-        <CardDescription className="flex items-start gap-1.5">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>
-            High demand with low demonstrated percentage marks a skill worth
-            training. The self-reported bar includes students who only list the
-            skill in their profile or resume — it is not proof of proficiency.
-            {skills.length > PREVIEW_COUNT && !showAll &&
-              ` Showing the ${PREVIEW_COUNT} highest-priority skills of ${skills.length}.`}
-          </span>
-        </CardDescription>
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={340}>

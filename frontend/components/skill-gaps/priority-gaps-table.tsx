@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -46,13 +45,6 @@ export function PriorityGapsTable({
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Highest priority skill gaps</CardTitle>
-        <CardDescription>
-          Priority combines demand (50%), the demonstrated-skill gap (40%) and
-          demand growth (10% when a comparable period exists). Demonstrated and
-          self-reported counts are separate evidence types — reporting a skill
-          is not demonstrating it. Click a column header to re-sort, a row to
-          inspect the skill.
-        </CardDescription>
       </CardHeader>
       <CardContent>
         {skills.length === 0 ? (

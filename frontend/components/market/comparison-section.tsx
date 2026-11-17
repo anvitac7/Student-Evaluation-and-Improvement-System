@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { Building2, Layers } from "lucide-react";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EntityComparePanel, type CompareOption } from "@/components/market/entity-compare-panel";
 import type { MarketFiltersState } from "@/hooks/use-market-analytics";
@@ -75,10 +75,6 @@ export function ComparisonSection({
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Skill requirement comparison</CardTitle>
-        <CardDescription>
-          Compare what selected companies or job families ask for — shared skills,
-          requirements unique to one of them, and their demand for each skill.
-        </CardDescription>
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="companies">

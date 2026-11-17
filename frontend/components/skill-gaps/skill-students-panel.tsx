@@ -91,12 +91,9 @@ export function SkillStudentsPanel({ skill }: { skill: SkillGapEntry }) {
           <Users className="h-4 w-4" /> Students — {skill.name}
         </CardTitle>
         <CardDescription>
-          Every student&apos;s evidence for this skill only. &quot;Self-reported&quot;
-          means the profile or active resume lists it; &quot;assessment-demonstrated&quot;
-          requires graded answers on eligible drive assessments. Evidence
-          counts: {skill.students_demonstrated} demonstrated,{" "}
-          {skill.students_reported_only} self-reported only,{" "}
-          {skill.students_both} both, {skill.students_no_evidence} with none.
+          {skill.students_demonstrated} demonstrated ·{" "}
+          {skill.students_reported_only} self-reported only ·{" "}
+          {skill.students_both} both · {skill.students_no_evidence} with no evidence.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

@@ -12,7 +12,7 @@ import {
 } from "recharts";
 
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { CompanyMarketAnalytics } from "@/types/market-analytics";
@@ -93,9 +93,6 @@ export function CompanyAnalyticsSection({
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Company requirements</CardTitle>
-        <CardDescription>
-          Where the demand comes from — posting volume and the skills each company asks for.
-        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="overflow-hidden">

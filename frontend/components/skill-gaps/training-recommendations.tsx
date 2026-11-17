@@ -1,8 +1,8 @@
 "use client";
 
-import { GraduationCap, Info } from "lucide-react";
+import { GraduationCap } from "lucide-react";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { SkillGapEntry } from "@/types/skill-gaps";
 
 /**
@@ -22,12 +22,6 @@ export function TrainingRecommendations({ skills }: { skills: SkillGapEntry[] })
         <CardTitle className="flex items-center gap-2 text-base">
           <GraduationCap className="h-4 w-4" /> Training priorities
         </CardTitle>
-        <CardDescription>
-          Suggested training order, from the same transparent priority score
-          (demand 50% + demonstrated gap 40% + comparable growth 10%). These
-          are the skills with the largest gap between what industry demands and
-          what students have actually demonstrated.
-        </CardDescription>
       </CardHeader>
       <CardContent>
         <ol className="space-y-2">
@@ -55,12 +49,6 @@ export function TrainingRecommendations({ skills }: { skills: SkillGapEntry[] })
             </li>
           ))}
         </ol>
-        <p className="mt-3 flex items-start gap-1 text-xs text-muted-foreground">
-          <Info className="mt-0.5 h-3 w-3 shrink-0" />
-          Priority is a transparent demo weighting, not an industry standard —
-          the exact weights are documented in the API metadata. Growth
-          contributes only when a comparable historical period exists.
-        </p>
       </CardContent>
     </Card>
   );

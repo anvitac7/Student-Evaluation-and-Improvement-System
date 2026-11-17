@@ -2610,3 +2610,89 @@ priority score. TPO-only, read-only, fully incremental over Phases 1-7.
 - Resume evidence uses only the ACTIVE resume's extracted `skill_set`
   (already grounded in the canonical vocabulary by the Phase 6/7 parsing
   pipeline); raw resume text is never re-parsed here and never exposed.
+
+---
+
+## Phase 9 - TPO Analytics UI Cleanup (2026-11-17)
+
+Presentation-only cleanup of the whole TPO Analytics tree: section titles
+kept, explanatory paragraphs/subtitles removed, the Skill Gap Analysis
+methodology section deleted entirely. No backend, API, calculation or data
+changes; no new dependencies.
+
+### Pages and components inspected (checklist)
+
+- `app/(tpo)/tpo/dashboard/analytics/page.tsx` (Analytics overview:
+  application funnel, per-drive breakdown).
+- `app/(tpo)/tpo/dashboard/analytics/trending/page.tsx` (Market Insights
+  hub) plus every `components/market/*` section: trending skills, trend
+  insights, historical trends (skill comparison), emerging & rising skills,
+  company requirements, job family breakdown, skill requirement comparison
+  (entity compare panel), summary cards, filter panel, trend badge.
+- `app/(tpo)/tpo/dashboard/analytics/skill-gaps/page.tsx` plus every
+  `components/skill-gaps/*`: filter panel, summary cards, demand vs
+  student proficiency chart, highest priority skill gaps table, skill detail
+  panel, student-level panel, training priorities, unmapped-skill cards.
+- Also verified: `components/analytics/drive-breakdown.tsx` (rankings /
+  applied students / test participants tabs), `components/shared/*` and
+  `lib/market-insights.ts` - no visible explanatory text to remove there.
+
+### Explanatory text removed (categories)
+
+- Page-header subtitles ("How your drives are performing.", "A market-wide
+  view of trending skills...", the Skill Gap Analysis evidence-chain
+  paragraph, the market period-comparison line under the Market Insights
+  title).
+- Card/subsection descriptions beneath titles (application funnel, per-drive
+  breakdown, historical trends, emerging skills, company requirements, job
+  family breakdown, comparison section, demand-vs-proficiency chart,
+  priority table, training priorities).
+- Methodology/rule blocks (emerging-skills classification-rules paragraph,
+  skill-gap thresholds line, priority-weighting note, entity-comparison
+  filter-notes paragraph and helper text).
+- Inline helper explanations (comparison panel "select at least..." hint,
+  "pick more skills..." hint, company/family percentage notes).
+- **Skill Gap Analysis "Dataset & methodology notes" card removed entirely**
+  (heading + disclaimer + all notes; not relocated anywhere - the temporary
+  PageIntro fallback that surfaced `meta.notes[0]` was deleted with it).
+- Prose kept concise where numbers matter: skill detail header now shows
+  "N postings - X% of filtered postings - growth +Y%" as a data line, the
+  student panel description keeps only the evidence counts, partial-year
+  notes collapse to the concise "{period} only" badge.
+
+### Preserved (functional)
+
+All section/chart/table titles, column headers, summary metrics, filters,
+search, pagination, rankings, student details, status/trend/classification
+badges, legends, loading/error/empty states, retry controls, and functional
+tooltips (trend badge explanations, evidence-tile threshold tooltips,
+MiniStat tooltips, chip tooltips). Distinctions like Assessment-demonstrated
+/ Self-reported / Developing / Insufficient evidence remain visible. Trend
+insights observations kept - they are data-derived analytics, not
+methodology text. One draft-selection chip group in the comparison panel
+was preserved during editing (functional).
+
+### Visual cleanup
+
+Headers reduced to bare titles (consistent `font-display text-2xl`
+hierarchy across all three analytics pages), removed description leftovers
+and empty margins, compacted spacing (overview page `space-y-4`),
+headings now sit directly above their charts/tables.
+
+### Validation
+
+- Frontend `typecheck` clean, `lint` clean (no warnings/errors),
+  `next build` succeeds.
+- Live smoke: all three analytics pages serve 200 with the role cookie and
+  307-redirect anonymous users (middleware unchanged); backend untouched -
+  no backend files modified in this phase.
+- Backend test suite not re-run for this phase (zero backend changes);
+  last full run: 275 passed (Phase 8).
+
+### Limitations
+
+- No desktop browser connected, so the visual result needs the same manual
+  pass noted in Phases 4-8 (charts, tabs, responsive layout).
+- Methodology metadata still lives in the API responses (`meta.notes`,
+  disclaimers, tooltips); it is simply no longer rendered as dashboard
+  text, so nothing was lost for future transparency features.

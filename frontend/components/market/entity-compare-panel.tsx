@@ -33,31 +33,6 @@ const MAX_ENTITIES = 6;
 /** Rows shown in the demand matrix before the "Show all" toggle. */
 const MATRIX_PREVIEW_ROWS = 12;
 
-/** Human-readable note of which dashboard posting filters the comparison reuses. */
-function comparisonFilterNote(
-  dimension: ComparisonDimension,
-  filters: CompareFilters
-): string {
-  const notes: string[] = [];
-  if (filters.year_from != null || filters.year_to != null) {
-    notes.push(
-      `year range ${filters.year_from ?? "…"}–${filters.year_to ?? "…"}`
-    );
-  }
-  if (filters.location) notes.push(`location "${filters.location}"`);
-  if (dimension === "company" && filters.job_family) {
-    notes.push(`job family "${filters.job_family}"`);
-  }
-  if (dimension === "job_family" && filters.company) {
-    notes.push("the dashboard's company filter");
-  }
-  const applied =
-    notes.length > 0
-      ? ` (${notes.join(", ")})`
-      : " (no posting filters are set)";
-  return `The comparison follows the dashboard's posting filters${applied}.`;
-}
-
 export interface CompareOption {
   key: string;
   label: string;
@@ -160,11 +135,6 @@ function DemandMatrixSection({
   return (
     <div className="space-y-2">
       <h4 className="text-sm font-semibold">Skill demand comparison</h4>
-      <p className="text-xs text-muted-foreground">
-        Percentages are each {entityLabel}&apos;s demand for the skill relative to its OWN
-        postings (backend-computed), so columns are directly comparable. A dash means the{" "}
-        {entityLabel} does not require the skill.
-      </p>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[480px] text-sm">
           <caption className="sr-only">Skill demand across the selected {entityLabel}s</caption>
@@ -242,10 +212,6 @@ function SharedSkillsSection({
   return (
     <div className="space-y-2">
       <h4 className="text-sm font-semibold">Shared skills</h4>
-      <p className="text-xs text-muted-foreground">
-        Skills required by multiple selected {entityLabel}, with each one&apos;s demand
-        percentage relative to its own postings.
-      </p>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[480px] text-sm">
           <caption className="sr-only">Skills shared across the selected {entityLabel}</caption>
@@ -314,12 +280,6 @@ function UniqueSkillsSection({
         <h4 className="text-sm font-semibold">
           {dimension === "company" ? "Company" : "Family"}-specific skills
         </h4>
-        <p className="text-xs text-muted-foreground">
-          Skills required by exactly one selected {entityLabel} but none of the others.
-          Each chip also shows how rare the skill is in the overall filtered market, so a
-          skill that is unique here but common elsewhere is not mistaken for a niche
-          requirement.
-        </p>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         {groups.map((group) => (
@@ -470,7 +430,7 @@ export function EntityComparePanel({
               <RotateCcw className="mr-2 h-4 w-4" /> Reset comparison
             </Button>
           </div>
-          {draftKeys.length > 0 ? (
+          {draftKeys.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {draftKeys.map((key) => (
                 <Badge key={key} variant="secondary" className="gap-1 font-normal">
@@ -486,12 +446,6 @@ export function EntityComparePanel({
                 </Badge>
               ))}
             </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              {dimension === "company"
-                ? `Select at least ${minSelection} companies (up to ${MAX_ENTITIES}) to compare their skill requirements.`
-                : "Select one job family to inspect its skills, or several (up to 6) to compare them."}
-            </p>
           )}
           {draftKeys.length > 0 && draftKeys.length < minSelection && (
             <p className="text-xs text-muted-foreground">
@@ -499,10 +453,6 @@ export function EntityComparePanel({
               {dimension === "company" ? "compare" : "proceed"}.
             </p>
           )}
-          <p className="text-xs text-muted-foreground">
-            {comparisonFilterNote(dimension, postingFilters)} Skill-category filters don&apos;t
-            apply to comparisons so the technical/soft split stays visible.
-          </p>
         </div>
       )}
 
